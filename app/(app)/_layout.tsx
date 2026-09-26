@@ -1,63 +1,194 @@
 import { Tabs } from "expo-router";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppHeader } from "@/components/app-header";
 import { IconActivity, IconHome, IconProgress, IconProjects, IconRequests, IconStock } from "@/components/icons";
 import { CompanyProvider, useCompany } from "@/lib/company-context";
+import { actionableCounts } from "@/lib/request-actions";
 import { useMaterialRequestsQuery } from "@/lib/queries";
+import { PERMISSIONS } from "@/shared";
 import { colors } from "@/theme";
 
-function usePendingApprovalCount() {
+const TRANSFER_CODES = [
+  PERMISSIONS.TRANSFERS_CREATE,
+  PERMISSIONS.TRANSFERS_APPROVE,
+  PERMISSIONS.TRANSFERS_DISPATCH,
+  PERMISSIONS.TRANSFERS_RECEIVE,
+];
+
+type ActionRequest = {
+  status: string;
+  requestedBy: { id: string };
+  lines: {
+    materialId: string;
+    allocations: { id: string; stockLocationId: string | null; qtyAllocated: string | number }[];
+  }[];
+  transfers: {
+    status: string;
+    fromLocationId: string | null;
+    lines: { materialId: string; qtySent: string | number; requestAllocationId: string | null }[];
+  }[];
+};
+
+function useRequestsMenuCount() {
   const { me, companyId } = useCompany();
-  const query = useMaterialRequestsQuery<{ status: string; assignee: { id: string } | null }>(
-    Boolean(companyId),
-  );
-  return (query.data ?? []).filter(
-    (request) => request.status === "SUBMITTED" && request.assignee?.id === me?.id,
-  ).length;
+  const requestsQuery = useMaterialRequestsQuery<ActionRequest>(Boolean(companyId));
+  const permissions = me?.companies.find((company) => company.id === companyId)?.permissions ?? [];
+  const canTransfer = TRANSFER_CODES.some((code) => permissions.includes(code));
+  const actionable = actionableCounts(requestsQuery.data ?? [], me?.id ?? "", canTransfer);
+  return actionable.requests + actionable.planning;
 }
 
-function tabIcon(Icon: typeof IconHome) {
-  return ({ color }: { color: string | { toString(): string }; size: number }) => (
-    <Icon color={String(color)} size={20} />
+const MENU = [
+  { name: "index", title: "Home", Icon: IconHome },
+  { name: "projects", title: "Projects", Icon: IconProjects },
+  { name: "progress", title: "Progress", Icon: IconProgress },
+  { name: "stock", title: "Stock", Icon: IconStock },
+  { name: "requests", title: "Requests", Icon: IconRequests },
+  { name: "activity", title: "Activity", Icon: IconActivity },
+] as const;
+
+function MenuIcon({
+  name,
+  Icon,
+  color,
+  focused,
+  count,
+}: {
+  name: string;
+  Icon: typeof IconHome;
+  color: string;
+  focused: boolean;
+  count: number;
+}) {
+  if (name !== "requests") return <Icon color={color} size={18} />;
+  return (
+    <View style={styles.tabIcon}>
+      <Icon color={color} size={18} />
+      {count > 0 ? (
+        <View style={[styles.badge, focused ? styles.badgeActive : styles.badgeIdle]}>
+          <Text style={[styles.badgeText, focused ? styles.badgeTextActive : styles.badgeTextIdle]}>{count}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function MenuBar({
+  state,
+  navigation,
+  insets,
+  pending,
+}: {
+  state: { index: number; routes: { key: string; name: string }[] };
+  navigation: {
+    emit: (event: { type: "tabPress"; target: string; canPreventDefault: true }) => { defaultPrevented: boolean };
+    navigate: (name: string) => void;
+  };
+  insets: { bottom: number };
+  pending: number;
+}) {
+  return (
+    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      {MENU.map((item) => {
+        const route = state.routes.find((entry) => entry.name === item.name);
+        if (!route) return null;
+        const focused = state.routes[state.index]?.name === item.name;
+        const color = focused ? colors.accentInk : colors.muted;
+        return (
+          <Pressable
+            key={item.name}
+            accessibilityRole="button"
+            accessibilityState={{ selected: focused }}
+            accessibilityLabel={item.title}
+            onPress={() => {
+              const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
+              if (!focused && !event.defaultPrevented) navigation.navigate(item.name);
+            }}
+            style={styles.tabHit}
+          >
+            <View style={[styles.tabPill, focused && styles.tabPillActive]}>
+              <MenuIcon name={item.name} Icon={item.Icon} color={color} focused={focused} count={pending} />
+              <Text style={[styles.tabLabel, { color }]} numberOfLines={1}>
+                {item.title}
+              </Text>
+            </View>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
 function AppTabs() {
-  const pending = usePendingApprovalCount();
+  const pending = useRequestsMenuCount();
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={["top"]}>
       <AppHeader />
       <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: colors.accent,
-          tabBarInactiveTintColor: colors.muted,
-          tabBarStyle: {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.line,
-            height: 64,
-          },
-          tabBarLabelStyle: { fontFamily: "Mukta_600SemiBold", fontSize: 11 },
-        }}
+        tabBar={(props) => <MenuBar {...props} pending={pending} />}
+        screenOptions={{ headerShown: false }}
       >
-        <Tabs.Screen name="index" options={{ title: "Home", tabBarIcon: tabIcon(IconHome) }} />
-        <Tabs.Screen name="projects" options={{ title: "Projects", tabBarIcon: tabIcon(IconProjects) }} />
-        <Tabs.Screen name="progress" options={{ title: "Progress", tabBarIcon: tabIcon(IconProgress) }} />
-        <Tabs.Screen name="stock" options={{ title: "Stock", tabBarIcon: tabIcon(IconStock) }} />
-        <Tabs.Screen
-          name="requests"
-          options={{
-            title: "Requests",
-            tabBarIcon: tabIcon(IconRequests),
-            tabBarBadge: pending > 0 ? pending : undefined,
-          }}
-        />
-        <Tabs.Screen name="activity" options={{ title: "Activity", tabBarIcon: tabIcon(IconActivity) }} />
+        <Tabs.Screen name="index" options={{ title: "Home" }} />
+        <Tabs.Screen name="projects" options={{ title: "Projects" }} />
+        <Tabs.Screen name="progress" options={{ title: "Progress" }} />
+        <Tabs.Screen name="stock" options={{ title: "Stock" }} />
+        <Tabs.Screen name="requests" options={{ title: "Requests" }} />
+        <Tabs.Screen name="activity" options={{ title: "Activity" }} />
         <Tabs.Screen name="team" options={{ href: null }} />
       </Tabs>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  bar: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 2,
+    paddingTop: 8,
+    paddingHorizontal: 10,
+    backgroundColor: colors.bg,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  tabHit: { flex: 1 },
+  tabPill: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    borderRadius: 12,
+  },
+  tabPillActive: { backgroundColor: colors.accent },
+  tabLabel: { fontFamily: "Mukta_600SemiBold", fontSize: 11 },
+  tabIcon: { width: 24, height: 20, alignItems: "center", justifyContent: "center" },
+  badge: {
+    position: "absolute",
+    top: -6,
+    right: -10,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeActive: { backgroundColor: colors.accentInk },
+  badgeIdle: { backgroundColor: colors.accent },
+  badgeText: {
+    fontFamily: "Mukta_700Bold",
+    fontSize: 11,
+    lineHeight: 13,
+    textAlign: "center",
+    includeFontPadding: false,
+    textAlignVertical: "center",
+    transform: [{ translateY: Platform.OS === "ios" ? 2 : 1 }],
+  },
+  badgeTextActive: { color: colors.accent },
+  badgeTextIdle: { color: colors.accentInk },
+});
 
 export default function AppLayout() {
   return (

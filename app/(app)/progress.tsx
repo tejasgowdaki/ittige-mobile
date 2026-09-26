@@ -478,7 +478,7 @@ export default function ProgressScreen() {
                 quiet
                 value={spaceId}
                 onChange={setSpaceId}
-                options={spaces.map((space) => ({ value: space.id, label: `${space.name} · ${formatFloorLabel(space.floor)}` }))}
+                options={spaces.map((space) => ({ value: space.id, label: `${formatFloorLabel(Number(space.floor))} · ${space.name}` }))}
               />
               <SelectField
                 label="Work type"

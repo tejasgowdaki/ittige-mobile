@@ -44,13 +44,7 @@ export const AUDIT_MODULES = [
 
 export type AuditModule = (typeof AUDIT_MODULES)[number];
 
-export const ACTIVITY_FILTER_MODULES = [
-  "projects",
-  "progress",
-  "stock",
-  "team",
-  "settings",
-] as const;
+export const ACTIVITY_FILTER_MODULES = ["projects", "stock"] as const;
 
 export type ActivityFilterModule = (typeof ACTIVITY_FILTER_MODULES)[number];
 
@@ -62,19 +56,15 @@ export function formatAuditModule(module: string) {
 }
 
 export const AUDIT_MODULE_LABELS: Record<ActivityFilterModule, string> = {
-  projects: "Projects",
-  progress: "Progress",
+  projects: "Project",
   stock: "Stock",
-  team: "Team",
-  settings: "Settings",
 };
 
 export const AUDIT_MODULE_PERMISSIONS: Record<
   ActivityFilterModule,
   readonly PermissionCode[] | "member"
 > = {
-  projects: [PERMISSIONS.PROJECTS_MANAGE, PERMISSIONS.CLIENTS_MANAGE],
-  progress: "member",
+  projects: "member",
   stock: [
     PERMISSIONS.STOCK_READ,
     PERMISSIONS.GODOWNS_READ,
@@ -91,9 +81,10 @@ export const AUDIT_MODULE_PERMISSIONS: Record<
     PERMISSIONS.USAGE_CREATE,
     PERMISSIONS.DISCARDS_CREATE,
     PERMISSIONS.DISCARDS_APPROVE,
+    PERMISSIONS.REQUESTS_CREATE,
+    PERMISSIONS.REQUESTS_APPROVE,
+    PERMISSIONS.REQUESTS_FULFILL,
   ],
-  team: [PERMISSIONS.USERS_MANAGE, PERMISSIONS.ROLES_CUSTOMIZE],
-  settings: [PERMISSIONS.COMPANY_SETTINGS_WRITE],
 };
 
 export function activityFilterModulesForPermissions(
@@ -117,8 +108,10 @@ export function expandActivityFilterModules(
     if (filter === "projects") {
       modules.add("projects");
       modules.add("spaces");
-    } else {
-      modules.add(filter);
+      modules.add("progress");
+    } else if (filter === "stock") {
+      modules.add("stock");
+      modules.add("requests");
     }
   }
   return [...modules];

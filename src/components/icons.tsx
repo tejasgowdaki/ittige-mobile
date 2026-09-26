@@ -101,6 +101,15 @@ export function IconLogout({ size, color = "#3a2218" }: IconProps) {
   );
 }
 
+export function IconSend({ size, color = "#3a2218" }: IconProps) {
+  return (
+    <Mark size={size}>
+      <Path d="M22 2 11 13" stroke={color} {...stroke} />
+      <Path d="M22 2 15 22l-4-9-9-4Z" stroke={color} {...stroke} />
+    </Mark>
+  );
+}
+
 export function IconCheck({ size, color = "#3a2218" }: IconProps) {
   return (
     <Mark size={size}>
@@ -115,6 +124,14 @@ export function IconImage({ size, color = "#3a2218" }: IconProps) {
       <Rect x="3" y="5" width="18" height="14" rx="2" stroke={color} fill="none" {...stroke} />
       <Circle cx="9" cy="10" r="1.5" stroke={color} {...stroke} />
       <Path d="M21 15l-5-5-8 8" stroke={color} {...stroke} />
+    </Mark>
+  );
+}
+
+export function IconFilter({ size, color = "#3a2218" }: IconProps) {
+  return (
+    <Mark size={size}>
+      <Path d="M4 5h16l-6 7v5l-4 2v-7L4 5Z" stroke={color} {...stroke} />
     </Mark>
   );
 }

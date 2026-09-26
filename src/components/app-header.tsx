@@ -6,9 +6,9 @@ import { apiFetch, type MeResponse } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useCompany } from "@/lib/company-context";
 import { queryKeys } from "@/lib/query-keys";
-import { formatPhoneDisplay } from "@/shared";
+import { formatPhoneDisplay, normalizePhone } from "@/shared";
 import { IconLogout, IconSave, IconTeam, IconUser } from "@/components/icons";
-import { Badge, Empty, ErrorText, Field, Row, SelectField, Sheet, TextField } from "@/components/ui";
+import { Badge, Empty, ErrorText, Field, PhoneField, Row, SelectField, Sheet, TextField } from "@/components/ui";
 import { colors } from "@/theme";
 
 export function AppHeader() {
@@ -18,6 +18,7 @@ export function AppHeader() {
   const queryClient = useQueryClient();
   const [sheet, setSheet] = useState<"menu" | "profile" | null>(null);
   const [profileName, setProfileName] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,17 +27,31 @@ export function AppHeader() {
   const initial = (me?.name?.trim()?.[0] || "?").toUpperCase();
   const projects = me?.projectAssignments.filter((item) => item.companyId === companyId) ?? [];
 
+  function localPhone(phone: string | null | undefined) {
+    const normalized = phone ? normalizePhone(phone) : null;
+    return normalized?.startsWith("+91") ? normalized.slice(3) : "";
+  }
+
   async function saveProfile() {
     if (!profileName.trim()) return;
+    const phone = isAdmin ? normalizePhone(profilePhone) : null;
+    if (isAdmin && !phone) {
+      setError("Enter a valid 10-digit Indian mobile number");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const updated = await apiFetch<MeResponse>("/api/v1/me", {
         method: "PATCH",
-        body: JSON.stringify({ name: profileName.trim() }),
+        body: JSON.stringify({
+          name: profileName.trim(),
+          ...(phone ? { phone } : {}),
+        }),
       });
       queryClient.setQueryData(queryKeys.me, updated);
       setProfileName("");
+      setProfilePhone("");
       setError(null);
       setSheet(null);
     } catch (err) {
@@ -72,6 +87,7 @@ export function AppHeader() {
         title={sheet === "profile" ? "Profile" : "Account"}
         onClose={() => {
           setProfileName("");
+          setProfilePhone("");
           setError(null);
           setSheet(null);
         }}
@@ -85,6 +101,7 @@ export function AppHeader() {
               label="Profile"
               onPress={() => {
                 setProfileName(me?.name ?? "");
+                setProfilePhone(localPhone(me?.phone));
                 setError(null);
                 setSheet("profile");
               }}
@@ -113,9 +130,18 @@ export function AppHeader() {
             <Field label="Name">
               <TextField value={profileName} onChangeText={setProfileName} />
             </Field>
-            <Field label="Phone">
-              <TextField value={me?.phone ? formatPhoneDisplay(me.phone) : ""} editable={false} />
-            </Field>
+            {isAdmin ? (
+              <>
+                <PhoneField quiet={false} value={profilePhone} onChangeText={setProfilePhone} />
+                {profilePhone !== localPhone(me?.phone) ? (
+                  <Text style={styles.hint}>Next sign-in uses this number.</Text>
+                ) : null}
+              </>
+            ) : (
+              <Field label="Phone">
+                <TextField value={me?.phone ? formatPhoneDisplay(me.phone) : ""} editable={false} />
+              </Field>
+            )}
             {current ? (
               <Field label="Role">
                 {current.companyRole === "ADMIN" ? (
@@ -140,12 +166,15 @@ export function AppHeader() {
             ) : null}
             <ErrorText>{error}</ErrorText>
             <Pressable
-              style={[styles.save, (saving || profileName.trim().length < 1) && styles.disabled]}
-              disabled={saving || profileName.trim().length < 1}
+              style={[
+                styles.save,
+                (saving || profileName.trim().length < 1 || (isAdmin && profilePhone.length !== 10)) && styles.disabled,
+              ]}
+              disabled={saving || profileName.trim().length < 1 || (isAdmin && profilePhone.length !== 10)}
               onPress={() => void saveProfile()}
             >
               <IconSave size={16} color={colors.accentInk} />
-              <Text style={styles.saveText}>{saving ? "Saving…" : "Save name"}</Text>
+              <Text style={styles.saveText}>{saving ? "Saving…" : isAdmin ? "Save" : "Save name"}</Text>
             </Pressable>
           </>
         )}
@@ -195,6 +224,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
+  hint: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: -4 },
   saveText: { color: colors.accentInk, fontFamily: "Mukta_700Bold", fontSize: 16 },
   disabled: { opacity: 0.55 },
 });

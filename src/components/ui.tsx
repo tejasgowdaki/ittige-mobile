@@ -56,14 +56,18 @@ export function Field({
 export function PhoneField({
   value,
   onChangeText,
+  quiet = true,
 }: {
   value: string;
   onChangeText: (value: string) => void;
+  quiet?: boolean;
 }) {
   return (
-    <Field label="Phone" quiet>
+    <Field label="Phone" quiet={quiet}>
       <View style={styles.phoneField}>
-        <Text style={styles.phonePrefix}>+91</Text>
+        <View style={styles.phonePrefixBox}>
+          <Text style={styles.phonePrefix}>+91</Text>
+        </View>
         <TextInput
           value={value}
           onChangeText={(next) => onChangeText(next.replace(/\D/g, "").slice(0, 10))}
@@ -294,19 +298,21 @@ export function SelectField({
   value,
   options,
   onChange,
+  placeholder = "Select",
 }: {
   label?: string;
   quiet?: boolean;
   value: string;
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const current = options.find((option) => option.value === value);
   return (
     <Field label={label} quiet={quiet}>
       <Pressable style={[styles.input, styles.select]} onPress={() => setOpen((currentOpen) => !currentOpen)}>
-        <Text style={styles.inputText}>{current?.label || "Select"}</Text>
+        <Text style={[styles.inputText, !current && styles.placeholderText]}>{current?.label || placeholder}</Text>
         <IconChevronDown size={16} color={colors.muted} />
       </Pressable>
       {open ? (
@@ -444,6 +450,7 @@ const styles = StyleSheet.create({
   },
   textarea: { minHeight: 88, paddingTop: 12, textAlignVertical: "top" },
   inputText: { fontFamily: "Mukta_400Regular", fontSize: 16, color: colors.ink },
+  placeholderText: { color: colors.muted },
   error: { color: colors.danger, fontFamily: "Mukta_500Medium", marginBottom: 8 },
   empty: { color: colors.muted, fontFamily: "Mukta_400Regular", paddingVertical: 12 },
   button: {
@@ -467,22 +474,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.elevated,
     overflow: "hidden",
   },
-  phonePrefix: {
+  phonePrefixBox: {
+    minHeight: controlHeight,
+    justifyContent: "center",
     paddingHorizontal: 12,
-    textAlignVertical: "center",
     borderRightWidth: 1,
     borderRightColor: colors.line,
     backgroundColor: "rgba(58,34,24,0.04)",
+  },
+  phonePrefix: {
     color: colors.muted,
     fontFamily: "Mukta_700Bold",
     fontSize: 15,
-    lineHeight: controlHeight,
+    lineHeight: 20,
   },
   phoneInput: {
     flex: 1,
+    minHeight: controlHeight,
     paddingHorizontal: 14,
     fontFamily: "Mukta_400Regular",
     fontSize: 16,
+    lineHeight: 22,
     color: colors.ink,
   },
   select: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

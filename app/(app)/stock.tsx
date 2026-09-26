@@ -1,35 +1,83 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
+import { DateField } from "@/components/date-field";
+import { IconPencil, IconPlus, IconTrash } from "@/components/icons";
 import { PhotoPicker, type PickedPhoto } from "@/components/photo-picker";
-import { Button, Copy, Empty, ErrorText, FilterLink, Row, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Copy,
+  Empty,
+  ErrorText,
+  Field,
+  FilterLink,
+  IconButton,
+  Screen,
+  SelectField,
+  Sheet,
+  TextField,
+  Title,
+} from "@/components/ui";
 import { apiBaseUrl, apiFetch, uploadMedia } from "@/lib/api-client";
 import { getSessionToken } from "@/lib/session-store";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
 import { toDateKey } from "@/lib/dates";
 import { queryKeys } from "@/lib/query-keys";
 import { useGodownsQuery, useMaterialsQuery, useProjectsQuery, useStockQuery, useTransfersQuery } from "@/lib/queries";
+import { colors } from "@/theme";
 
 type Balance = {
   id: string;
   quantity: string | number;
   material: { id: string; name: string; uom: string };
-  stockLocation: { id: string; kind: string; godown: { name: string } | null; project: { id: string; name: string } | null };
+  stockLocation: { id: string; kind: string; godownId: string | null; projectId: string | null };
   media?: { id: string; url: string }[];
+};
+type LocationRef = {
+  godown: { name: string } | null;
+  project: { name: string } | null;
+  kind?: string;
 };
 type Transfer = {
   id: string;
   status: string;
   notes: string | null;
-  fromLocation: { godown: { name: string } | null; project: { name: string } | null } | null;
-  toLocation: { godown: { name: string } | null; project: { name: string } | null };
+  supplierName: string | null;
+  fromLocation: LocationRef | null;
+  toLocation: LocationRef;
   lines: { qtySent: string | number; material: { name: string; uom: string } }[];
   media?: { url: string }[];
 };
-const UOMS = ["BAG", "KG", "TON", "METER", "SQ_METER", "PIECE", "LITER", "CUBIC_METER", "ROLL", "BOX"];
+type BalanceGroup = {
+  materialId: string;
+  name: string;
+  uom: string;
+  total: number;
+  lines: Balance[];
+};
 
-function place(location: { godown: { name: string } | null; project: { name: string } | null }) {
-  return location.godown?.name || location.project?.name || "Location";
+const UOMS = ["BAG", "KG", "TON", "METER", "PIECE", "LITER"];
+const REMOVE_REASONS = [
+  { value: "USED", label: "Used on project" },
+  { value: "DAMAGED", label: "Damaged" },
+  { value: "EXPIRED", label: "Expired" },
+  { value: "WASTAGE", label: "Wastage" },
+  { value: "THEFT", label: "Theft" },
+  { value: "OTHER", label: "Other" },
+];
+const TABS = [
+  ["balances", "Balances"],
+  ["transfers", "Transfers"],
+  ["godowns", "Godowns"],
+] as const;
+
+function locationLabel(location: LocationRef | null, supplierName?: string | null) {
+  if (!location) return supplierName ? `Buy · ${supplierName}` : "Buy from provider";
+  if (location.godown) return `Godown · ${location.godown.name}`;
+  if (location.project) return `Project · ${location.project.name}`;
+  return location.kind || "Location";
 }
 
 export default function StockScreen() {
@@ -37,7 +85,7 @@ export default function StockScreen() {
   const gate = useCompanyGate();
   const queryClient = useQueryClient();
   const ready = !gate.needsOnboarding && Boolean(companyId);
-  const [tab, setTab] = useState<"balances" | "transfers" | "godowns">("balances");
+  const [tab, setTab] = useState<(typeof TABS)[number][0]>("balances");
   const stockQuery = useStockQuery<Balance>(ready);
   const transfersQuery = useTransfersQuery<Transfer>(ready);
   const godownsQuery = useGodownsQuery(ready);
@@ -50,12 +98,16 @@ export default function StockScreen() {
   const [godownOpen, setGodownOpen] = useState(false);
   const [materialOpen, setMaterialOpen] = useState(false);
   const [removeBalance, setRemoveBalance] = useState<Balance | null>(null);
+  const [locationsMaterialId, setLocationsMaterialId] = useState<string | null>(null);
+  const [godownToDelete, setGodownToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [materialToDelete, setMaterialToDelete] = useState<{ id: string; name: string } | null>(null);
   const [viewer, setViewer] = useState<string | null>(null);
   const [godownName, setGodownName] = useState("");
   const [editingGodown, setEditingGodown] = useState<string | null>(null);
   const [editingMaterial, setEditingMaterial] = useState<{ id: string; name: string; uom: string } | null>(null);
   const [receiptGodownId, setReceiptGodownId] = useState("");
   const [receiptMaterialId, setReceiptMaterialId] = useState("");
+  const [creatingMaterial, setCreatingMaterial] = useState(false);
   const [newMaterial, setNewMaterial] = useState("");
   const [uom, setUom] = useState("BAG");
   const [qty, setQty] = useState("10");
@@ -68,25 +120,71 @@ export default function StockScreen() {
   const [removeQty, setRemoveQty] = useState("");
   const [removeReason, setRemoveReason] = useState("USED");
   const [removeProjectId, setRemoveProjectId] = useState("");
+  const [removeNote, setRemoveNote] = useState("");
 
   const godowns = godownsQuery.data ?? [];
   const materials = materialsQuery.data ?? [];
   const projects = projectsQuery.data ?? [];
+  const balances = stockQuery.data ?? [];
+  const transfers = transfersQuery.data ?? [];
   const locations = [
-    ...godowns.flatMap((godown) => (godown.stockLocation ? [{ value: godown.stockLocation.id, label: `Godown · ${godown.name}` }] : [])),
-    ...projects.flatMap((project) => (project.stockLocation ? [{ value: project.stockLocation.id, label: `Project · ${project.name}` }] : [])),
+    ...godowns.flatMap((godown) =>
+      godown.stockLocation ? [{ value: godown.stockLocation.id, label: `Godown · ${godown.name}` }] : [],
+    ),
+    ...projects.flatMap((project) =>
+      project.stockLocation ? [{ value: project.stockLocation.id, label: `Project · ${project.name}` }] : [],
+    ),
   ];
+  const balanceGroups = useMemo(() => {
+    const map = new Map<string, BalanceGroup>();
+    for (const balance of balances) {
+      const existing = map.get(balance.material.id);
+      if (existing) {
+        existing.total += Number(balance.quantity);
+        existing.lines.push(balance);
+      } else {
+        map.set(balance.material.id, {
+          materialId: balance.material.id,
+          name: balance.material.name,
+          uom: balance.material.uom,
+          total: Number(balance.quantity),
+          lines: [balance],
+        });
+      }
+    }
+    return [...map.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [balances]);
+  const locationsGroup = locationsMaterialId
+    ? balanceGroups.find((group) => group.materialId === locationsMaterialId) ?? null
+    : null;
+  const transferAvailable = balances.find(
+    (balance) => balance.stockLocation.id === fromLocationId && balance.material.id === transferMaterialId,
+  );
+
+  function balanceLocationLabel(balance: Balance) {
+    if (balance.stockLocation.godownId) {
+      const godown = godowns.find((item) => item.id === balance.stockLocation.godownId);
+      return godown ? `Godown · ${godown.name}` : "Godown";
+    }
+    if (balance.stockLocation.projectId) {
+      const project = projects.find((item) => item.id === balance.stockLocation.projectId);
+      return project ? `Project · ${project.name}` : "Project";
+    }
+    return balance.stockLocation.kind;
+  }
 
   function resetEntryFields() {
-    setReceiptGodownId("");
-    setReceiptMaterialId("");
+    const locationIds = locations.map((location) => location.value);
+    setReceiptGodownId(godowns[0]?.id ?? "");
+    setReceiptMaterialId(materials[0]?.id ?? "");
+    setCreatingMaterial(materials.length === 0);
     setNewMaterial("");
     setUom("BAG");
     setQty("10");
     setDate(toDateKey(new Date()));
-    setFromLocationId("");
-    setToLocationId("");
-    setTransferMaterialId("");
+    setFromLocationId(locationIds[0] ?? "");
+    setToLocationId(locationIds[1] || locationIds[0] || "");
+    setTransferMaterialId(materials[0]?.id ?? "");
     setTransferNotes("");
     setPhotos([]);
     setGodownName("");
@@ -94,7 +192,8 @@ export default function StockScreen() {
     setEditingMaterial(null);
     setRemoveQty("");
     setRemoveReason("USED");
-    setRemoveProjectId("");
+    setRemoveProjectId(projects[0]?.id ?? "");
+    setRemoveNote("");
     setError(null);
   }
 
@@ -114,7 +213,11 @@ export default function StockScreen() {
     setError(null);
     try {
       if (editingGodown) {
-        await apiFetch(`/api/v1/godowns/${editingGodown}`, { method: "PATCH", companyId, body: JSON.stringify({ name: godownName.trim() }) });
+        await apiFetch(`/api/v1/godowns/${editingGodown}`, {
+          method: "PATCH",
+          companyId,
+          body: JSON.stringify({ name: godownName.trim() }),
+        });
       } else {
         await apiFetch("/api/v1/godowns", { method: "POST", companyId, body: JSON.stringify({ name: godownName.trim() }) });
       }
@@ -134,7 +237,7 @@ export default function StockScreen() {
     setError(null);
     try {
       let materialId = receiptMaterialId;
-      if (!materialId) {
+      if (creatingMaterial || !materialId) {
         const material = await apiFetch<{ id: string }>("/api/v1/materials", {
           method: "POST",
           companyId,
@@ -147,7 +250,11 @@ export default function StockScreen() {
       await apiFetch("/api/v1/receipts", {
         method: "POST",
         companyId,
-        body: JSON.stringify({ stockLocationId: godown.stockLocation.id, occurredOn: date, lines: [{ materialId, quantity: Number(qty) }] }),
+        body: JSON.stringify({
+          stockLocationId: godown.stockLocation.id,
+          occurredOn: date,
+          lines: [{ materialId, quantity: Number(qty) }],
+        }),
       });
       setReceiveOpen(false);
       resetEntryFields();
@@ -200,6 +307,7 @@ export default function StockScreen() {
             projectId: removeProjectId,
             stockLocationId: removeBalance.stockLocation.id,
             usedOn: date,
+            notes: removeNote.trim() || null,
             lines: [{ materialId: removeBalance.material.id, quantity }],
           }),
         });
@@ -211,6 +319,7 @@ export default function StockScreen() {
           body: JSON.stringify({
             stockLocationId: removeBalance.stockLocation.id,
             reason: removeReason,
+            reasonNote: removeNote.trim() || null,
             occurredOn: date,
             lines: [{ materialId: removeBalance.material.id, quantity }],
           }),
@@ -218,6 +327,7 @@ export default function StockScreen() {
         for (const photo of photos) await uploadMedia({ companyId, ownerType: "DISCARD", ownerId: discard.id, ...photo });
       }
       setRemoveBalance(null);
+      setLocationsMaterialId(null);
       resetEntryFields();
       await refreshStock();
     } catch (err) {
@@ -230,131 +340,442 @@ export default function StockScreen() {
   if (gate.loading) return <Screen><Empty>Loading…</Empty></Screen>;
 
   const token = getSessionToken();
+  const quantityLabel = transferAvailable
+    ? `Quantity · available ${Number(transferAvailable.quantity)} ${transferAvailable.material.uom}`
+    : fromLocationId && transferMaterialId
+      ? "Quantity · available 0"
+      : "Quantity";
 
   return (
     <Screen>
       <Title>Stock</Title>
       <Copy>Balances, receipts, and project transfers.</Copy>
-      <FilterLink label="Balances" active={tab === "balances"} onPress={() => setTab("balances")} />
-      <FilterLink label="Transfers" active={tab === "transfers"} onPress={() => setTab("transfers")} />
-      <FilterLink label="Godowns" active={tab === "godowns"} onPress={() => setTab("godowns")} />
+      <View style={styles.tabs}>
+        {TABS.map(([id, label]) => (
+          <View key={id} style={styles.tab}>
+            <Button label={label} secondary={tab !== id} onPress={() => setTab(id)} />
+          </View>
+        ))}
+      </View>
+      <ErrorText>{!receiveOpen && !transferOpen && !godownOpen && !materialOpen && !removeBalance ? error : null}</ErrorText>
+
       {tab === "balances" ? (
-        <>
-          <Button label="Receive" onPress={() => setReceiveOpen(true)} />
-          <Button label="Transfer" secondary onPress={() => setTransferOpen(true)} />
-          {(stockQuery.data ?? []).map((balance) => (
-            <Row
-              key={balance.id}
-              title={`${balance.material.name} · ${Number(balance.quantity)} ${balance.material.uom}`}
-              subtitle={place(balance.stockLocation)}
-              trailing="Remove"
-              onPress={() => setRemoveBalance(balance)}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionLabel}>Balances</Text>
+            <IconButton
+              label="Receive stock"
+              onPress={() => {
+                resetEntryFields();
+                setReceiveOpen(true);
+              }}
             />
+          </View>
+          {balanceGroups.length === 0 ? <Empty>No stock yet. Receive into a godown.</Empty> : null}
+          {balanceGroups.map((group) => (
+            <View key={group.materialId} style={styles.row}>
+              <View style={styles.rowMain}>
+                <View style={styles.nameRow}>
+                  <Text style={styles.rowTitle}>{group.name}</Text>
+                  <Pressable
+                    accessibilityLabel={`Edit ${group.name}`}
+                    onPress={() => {
+                      setEditingMaterial({ id: group.materialId, name: group.name, uom: group.uom });
+                      setMaterialOpen(true);
+                    }}
+                  >
+                    <IconPencil size={16} color={colors.ink} />
+                  </Pressable>
+                </View>
+                <FilterLink
+                  label={`${group.lines.length} ${group.lines.length === 1 ? "location" : "locations"}`}
+                  muted
+                  onPress={() => setLocationsMaterialId(group.materialId)}
+                />
+              </View>
+              <Badge>{`${group.total} ${group.uom}`}</Badge>
+              <Pressable
+                accessibilityLabel={`Delete ${group.name}`}
+                onPress={() => setMaterialToDelete({ id: group.materialId, name: group.name })}
+                hitSlop={8}
+              >
+                <IconTrash size={16} color={colors.ink} />
+              </Pressable>
+            </View>
           ))}
-          {(materialsQuery.data ?? []).map((material) => (
-            <Row key={material.id} title={material.name} subtitle={material.uom} trailing="Edit" onPress={() => { setEditingMaterial(material); setMaterialOpen(true); }} />
-          ))}
-        </>
+        </View>
       ) : null}
-      {tab === "transfers"
-        ? (transfersQuery.data ?? []).map((transfer) => (
-            <Row
+
+      {tab === "transfers" ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionLabel}>Transfers</Text>
+            <IconButton
+              label="New transfer"
+              onPress={() => {
+                resetEntryFields();
+                setTransferOpen(true);
+              }}
+            />
+          </View>
+          {transfers.length === 0 ? <Empty>No transfers yet.</Empty> : null}
+          {transfers.map((transfer) => (
+            <Pressable
               key={transfer.id}
-              title={`${transfer.fromLocation ? place(transfer.fromLocation) : "Buy"} → ${place(transfer.toLocation)}`}
-              subtitle={`${transfer.status} · ${transfer.lines.map((line) => `${line.material.name} ${Number(line.qtySent)}`).join(", ")}`}
+              style={styles.row}
               onPress={() => setViewer(transfer.media?.[0]?.url ?? null)}
-            />
-          ))
-        : null}
-      {tab === "godowns" ? (
-        <>
-          <Button label="New godown" onPress={() => { setEditingGodown(null); setGodownName(""); setGodownOpen(true); }} />
-          {godowns.map((godown) => (
-            <Row
-              key={godown.id}
-              title={godown.name}
-              trailing="Edit"
-              onPress={() => { setEditingGodown(godown.id); setGodownName(godown.name); setGodownOpen(true); }}
-            />
+            >
+              <View style={styles.rowMain}>
+                <Text style={styles.rowTitle}>
+                  {locationLabel(transfer.fromLocation, transfer.supplierName)} → {locationLabel(transfer.toLocation)}
+                </Text>
+                <Text style={styles.rowSub}>
+                  {transfer.lines.map((line) => `${line.material.name} ${Number(line.qtySent)} ${line.material.uom}`).join(" · ")}
+                  {transfer.notes ? ` · ${transfer.notes}` : ""}
+                </Text>
+              </View>
+            </Pressable>
           ))}
-        </>
+        </View>
       ) : null}
-      <ErrorText>{error}</ErrorText>
-      <Sheet open={receiveOpen} title="Receive" onClose={() => { setReceiveOpen(false); resetEntryFields(); }}>
-        <SelectField label="Godown" value={receiptGodownId} onChange={setReceiptGodownId} options={godowns.map((godown) => ({ value: godown.id, label: godown.name }))} />
-        <SelectField label="Material" value={receiptMaterialId} onChange={setReceiptMaterialId} options={[{ value: "", label: "New material" }, ...materials.map((material) => ({ value: material.id, label: material.name }))]} />
-        {!receiptMaterialId ? <TextField value={newMaterial} onChangeText={setNewMaterial} placeholder="Material name" /> : null}
-        <SelectField label="UOM" value={uom} onChange={setUom} options={UOMS.map((value) => ({ value, label: value }))} />
-        <TextField value={qty} onChangeText={setQty} keyboardType="decimal-pad" />
-        <TextField value={date} onChangeText={setDate} />
-        <Button label="Receive" pending={saving} onPress={() => void receive()} />
-      </Sheet>
-      <Sheet open={transferOpen} title="Transfer" onClose={() => { setTransferOpen(false); resetEntryFields(); }}>
-        <SelectField label="From" value={fromLocationId} onChange={setFromLocationId} options={locations} />
-        <SelectField label="To" value={toLocationId} onChange={setToLocationId} options={locations} />
-        <SelectField label="Material" value={transferMaterialId} onChange={setTransferMaterialId} options={materials.map((material) => ({ value: material.id, label: material.name }))} />
-        <TextField value={qty} onChangeText={setQty} keyboardType="decimal-pad" />
-        <TextField value={transferNotes} onChangeText={setTransferNotes} placeholder="Notes" />
-        <PhotoPicker photos={photos} onChange={setPhotos} />
-        <Button label="Transfer" pending={saving} onPress={() => void transfer()} />
-      </Sheet>
-      <Sheet open={godownOpen} title="Godown" onClose={() => { setGodownOpen(false); resetEntryFields(); }}>
-        <TextField value={godownName} onChangeText={setGodownName} placeholder="Name" />
-        <Button label="Save" pending={saving} onPress={() => void saveGodown()} />
-        {editingGodown ? (
-          <Button
-            label="Delete"
-            secondary
-            onPress={() => {
-              if (!companyId || !editingGodown) return;
-              void apiFetch(`/api/v1/godowns/${editingGodown}`, { method: "DELETE", companyId }).then(() => refreshStock());
-              setGodownOpen(false);
-              resetEntryFields();
-            }}
-          />
-        ) : null}
-      </Sheet>
-      <Sheet open={materialOpen} title="Material" onClose={() => { setMaterialOpen(false); resetEntryFields(); }}>
-        <TextField value={editingMaterial?.name ?? ""} onChangeText={(name) => setEditingMaterial((current) => current && { ...current, name })} />
-        <SelectField label="UOM" value={editingMaterial?.uom ?? "BAG"} onChange={(next) => setEditingMaterial((current) => current && { ...current, uom: next })} options={UOMS.map((value) => ({ value, label: value }))} />
+
+      {tab === "godowns" ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionLabel}>Godowns</Text>
+            <IconButton
+              label="New godown"
+              onPress={() => {
+                resetEntryFields();
+                setGodownOpen(true);
+              }}
+            />
+          </View>
+          {godowns.length === 0 ? <Empty>No godowns yet.</Empty> : null}
+          {godowns.map((godown) => (
+            <View key={godown.id} style={styles.row}>
+              <Text style={[styles.rowTitle, styles.rowMain]}>{godown.name}</Text>
+              <Pressable
+                accessibilityLabel={`Edit ${godown.name}`}
+                onPress={() => {
+                  setEditingGodown(godown.id);
+                  setGodownName(godown.name);
+                  setGodownOpen(true);
+                }}
+                hitSlop={8}
+              >
+                <IconPencil size={16} color={colors.ink} />
+              </Pressable>
+              <Pressable
+                accessibilityLabel={`Delete ${godown.name}`}
+                onPress={() => setGodownToDelete({ id: godown.id, name: godown.name })}
+                hitSlop={8}
+              >
+                <IconTrash size={16} color={colors.ink} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      <Sheet
+        open={receiveOpen}
+        title="Receive stock"
+        onClose={() => {
+          setReceiveOpen(false);
+          resetEntryFields();
+        }}
+      >
+        <SelectField
+          label="Godown"
+          quiet
+          value={receiptGodownId}
+          onChange={setReceiptGodownId}
+          options={godowns.map((godown) => ({ value: godown.id, label: godown.name }))}
+        />
+        {materials.length > 0 && !creatingMaterial ? (
+          <>
+            <View style={styles.fieldHead}>
+              <Text style={styles.quietLabel}>Material</Text>
+              <FilterLink
+                label="New material"
+                trailing
+                onPress={() => {
+                  setCreatingMaterial(true);
+                  setReceiptMaterialId("");
+                  setNewMaterial("");
+                }}
+              />
+            </View>
+            <SelectField
+              quiet
+              value={receiptMaterialId}
+              onChange={setReceiptMaterialId}
+              options={materials.map((material) => ({ value: material.id, label: material.name }))}
+            />
+          </>
+        ) : (
+          <>
+            <View style={styles.fieldHead}>
+              <Text style={styles.quietLabel}>New material</Text>
+              {materials.length > 0 ? (
+                <FilterLink
+                  label="Choose existing"
+                  trailing
+                  onPress={() => {
+                    setCreatingMaterial(false);
+                    setNewMaterial("");
+                    setReceiptMaterialId(materials[0]?.id ?? "");
+                  }}
+                />
+              ) : null}
+            </View>
+            <TextField value={newMaterial} onChangeText={setNewMaterial} placeholder="Material name" />
+            <SelectField label="Unit" quiet value={uom} onChange={setUom} options={UOMS.map((value) => ({ value, label: value }))} />
+          </>
+        )}
+        <Field label="Quantity" quiet>
+          <TextField value={qty} onChangeText={setQty} keyboardType="decimal-pad" />
+        </Field>
+        <DateField label="Date" value={date} onChange={setDate} />
+        <ErrorText>{error}</ErrorText>
         <Button
-          label="Save"
+          label="Receive stock"
           pending={saving}
+          disabled={godowns.length === 0}
+          icon={<IconPlus size={16} color={colors.accentInk} />}
+          onPress={() => void receive()}
+        />
+      </Sheet>
+
+      <Sheet
+        open={transferOpen}
+        title="New transfer"
+        onClose={() => {
+          setTransferOpen(false);
+          resetEntryFields();
+        }}
+      >
+        <SelectField label="From" quiet value={fromLocationId} onChange={setFromLocationId} options={locations} />
+        <SelectField label="To" quiet value={toLocationId} onChange={setToLocationId} options={locations} />
+        <SelectField
+          label="Material"
+          quiet
+          value={transferMaterialId}
+          onChange={setTransferMaterialId}
+          options={materials.map((material) => ({ value: material.id, label: material.name }))}
+        />
+        <Field label={quantityLabel} quiet>
+          <TextField value={qty} onChangeText={setQty} keyboardType="decimal-pad" />
+        </Field>
+        <Field label="Note" quiet>
+          <TextField value={transferNotes} onChangeText={setTransferNotes} placeholder="Optional" />
+        </Field>
+        <DateField label="Date" value={date} onChange={setDate} />
+        <PhotoPicker photos={photos} onChange={setPhotos} />
+        <ErrorText>{error}</ErrorText>
+        <Button
+          label="Create transfer"
+          pending={saving}
+          disabled={locations.length < 2 || !transferMaterialId}
+          onPress={() => void transfer()}
+        />
+      </Sheet>
+
+      <Sheet
+        open={godownOpen}
+        title={editingGodown ? "Edit godown" : "New godown"}
+        onClose={() => {
+          setGodownOpen(false);
+          resetEntryFields();
+        }}
+      >
+        <Field label="Name" quiet>
+          <TextField value={godownName} onChangeText={setGodownName} />
+        </Field>
+        <ErrorText>{error}</ErrorText>
+        <Button
+          label={editingGodown ? "Save godown" : "Create godown"}
+          pending={saving}
+          icon={editingGodown ? <IconPencil size={16} color={colors.accentInk} /> : <IconPlus size={16} color={colors.accentInk} />}
+          onPress={() => void saveGodown()}
+        />
+      </Sheet>
+
+      <Sheet
+        open={materialOpen}
+        title="Edit material"
+        onClose={() => {
+          setMaterialOpen(false);
+          resetEntryFields();
+        }}
+      >
+        <Field label="Name" quiet>
+          <TextField
+            value={editingMaterial?.name ?? ""}
+            onChangeText={(name) => setEditingMaterial((current) => (current ? { ...current, name } : current))}
+          />
+        </Field>
+        <SelectField
+          label="Unit"
+          quiet
+          value={editingMaterial?.uom ?? "BAG"}
+          onChange={(next) => setEditingMaterial((current) => (current ? { ...current, uom: next } : current))}
+          options={UOMS.map((value) => ({ value, label: value }))}
+        />
+        <ErrorText>{error}</ErrorText>
+        <Button
+          label="Save material"
+          pending={saving}
+          icon={<IconPencil size={16} color={colors.accentInk} />}
           onPress={() => {
             if (!companyId || !editingMaterial) return;
-            void apiFetch(`/api/v1/materials/${editingMaterial.id}`, {
+            const material = editingMaterial;
+            setSaving(true);
+            setError(null);
+            void apiFetch(`/api/v1/materials/${material.id}`, {
               method: "PATCH",
               companyId,
-              body: JSON.stringify({ name: editingMaterial.name, uom: editingMaterial.uom }),
-            }).then(() => refreshStock());
-            setMaterialOpen(false);
-            resetEntryFields();
-          }}
-        />
-        <Button
-          label="Delete"
-          secondary
-          onPress={() => {
-            if (!companyId || !editingMaterial) return;
-            void apiFetch(`/api/v1/materials/${editingMaterial.id}`, { method: "DELETE", companyId }).then(() => refreshStock());
-            setMaterialOpen(false);
-            resetEntryFields();
+              body: JSON.stringify({ name: material.name, uom: material.uom }),
+            })
+              .then(() => refreshStock())
+              .then(() => {
+                setMaterialOpen(false);
+                resetEntryFields();
+              })
+              .catch((err) => setError(err instanceof Error ? err.message : "Could not save material"))
+              .finally(() => setSaving(false));
           }}
         />
       </Sheet>
-      <Sheet open={Boolean(removeBalance)} title="Remove stock" onClose={() => { setRemoveBalance(null); resetEntryFields(); }}>
-        <SelectField label="Reason" value={removeReason} onChange={setRemoveReason} options={["USED", "DAMAGED", "EXPIRED", "THEFT", "WASTAGE", "OTHER"].map((value) => ({ value, label: value }))} />
-        {removeReason === "USED" ? (
-          <SelectField label="Project" value={removeProjectId} onChange={setRemoveProjectId} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
+
+      <Sheet
+        open={Boolean(locationsGroup) && !removeBalance}
+        title={locationsGroup?.name ?? "Locations"}
+        onClose={() => setLocationsMaterialId(null)}
+      >
+        {locationsGroup ? (
+          <>
+            <Copy>
+              {`Total ${locationsGroup.total} ${locationsGroup.uom} across ${locationsGroup.lines.length} ${locationsGroup.lines.length === 1 ? "location" : "locations"}`}
+            </Copy>
+            {locationsGroup.lines.map((balance) => (
+              <View key={balance.id} style={styles.row}>
+                <View style={styles.rowMain}>
+                  <Text style={styles.rowTitle}>{balanceLocationLabel(balance)}</Text>
+                  <Text style={styles.rowSub}>
+                    {Number(balance.quantity)} {balance.material.uom}
+                  </Text>
+                </View>
+                <FilterLink
+                  label="Remove"
+                  onPress={() => {
+                    setRemoveBalance(balance);
+                    setRemoveQty("");
+                    setRemoveReason("USED");
+                    setRemoveProjectId(projects[0]?.id ?? "");
+                    setRemoveNote("");
+                    setDate(toDateKey(new Date()));
+                    setPhotos([]);
+                  }}
+                />
+              </View>
+            ))}
+          </>
         ) : null}
-        <TextField value={removeQty} onChangeText={setRemoveQty} keyboardType="decimal-pad" placeholder="Quantity" />
-        <PhotoPicker photos={photos} onChange={setPhotos} />
-        <Button label="Remove" pending={saving} onPress={() => void remove()} />
       </Sheet>
+
+      <Sheet
+        open={Boolean(removeBalance)}
+        title={removeBalance ? `Remove ${removeBalance.material.name}` : "Remove stock"}
+        onClose={() => {
+          setRemoveBalance(null);
+          resetEntryFields();
+        }}
+      >
+        <SelectField label="Reason" quiet value={removeReason} onChange={setRemoveReason} options={REMOVE_REASONS} />
+        {removeReason === "USED" ? (
+          <SelectField
+            label="Project"
+            quiet
+            value={removeProjectId}
+            onChange={setRemoveProjectId}
+            options={projects.map((project) => ({ value: project.id, label: project.name }))}
+          />
+        ) : null}
+        <Field label={removeBalance ? `Quantity · available ${Number(removeBalance.quantity)} ${removeBalance.material.uom}` : "Quantity"} quiet>
+          <TextField value={removeQty} onChangeText={setRemoveQty} keyboardType="decimal-pad" />
+        </Field>
+        <Field label="Note" quiet>
+          <TextField value={removeNote} onChangeText={setRemoveNote} placeholder="Optional" />
+        </Field>
+        <DateField label="Date" value={date} onChange={setDate} />
+        <PhotoPicker photos={photos} onChange={setPhotos} />
+        <ErrorText>{error}</ErrorText>
+        <Button label="Remove stock" pending={saving} onPress={() => void remove()} />
+      </Sheet>
+
+      <Sheet
+        open={Boolean(godownToDelete)}
+        title="Delete godown"
+        onClose={() => {
+          setGodownToDelete(null);
+          setError(null);
+        }}
+      >
+        <Copy>{godownToDelete ? `Delete ${godownToDelete.name}? Discard all stock at this godown first.` : ""}</Copy>
+        <ErrorText>{error}</ErrorText>
+        <Button
+          label="Delete godown"
+          pending={saving}
+          pendingLabel="Deleting…"
+          icon={<IconTrash size={16} color={colors.accentInk} />}
+          onPress={() => {
+            if (!companyId || !godownToDelete) return;
+            setSaving(true);
+            void apiFetch(`/api/v1/godowns/${godownToDelete.id}`, { method: "DELETE", companyId })
+              .then(() => refreshStock())
+              .then(() => setGodownToDelete(null))
+              .catch((err) => setError(err instanceof Error ? err.message : "Could not delete godown"))
+              .finally(() => setSaving(false));
+          }}
+        />
+      </Sheet>
+
+      <Sheet
+        open={Boolean(materialToDelete)}
+        title="Delete material"
+        onClose={() => {
+          setMaterialToDelete(null);
+          setError(null);
+        }}
+      >
+        <Copy>{materialToDelete ? `Delete ${materialToDelete.name}? Discard all balances for this material first.` : ""}</Copy>
+        <ErrorText>{error}</ErrorText>
+        <Button
+          label="Delete material"
+          pending={saving}
+          pendingLabel="Deleting…"
+          icon={<IconTrash size={16} color={colors.accentInk} />}
+          onPress={() => {
+            if (!companyId || !materialToDelete) return;
+            setSaving(true);
+            void apiFetch(`/api/v1/materials/${materialToDelete.id}`, { method: "DELETE", companyId })
+              .then(() => refreshStock())
+              .then(() => setMaterialToDelete(null))
+              .catch((err) => setError(err instanceof Error ? err.message : "Could not delete material"))
+              .finally(() => setSaving(false));
+          }}
+        />
+      </Sheet>
+
       <Sheet open={Boolean(viewer)} title="Photo" onClose={() => setViewer(null)}>
         {viewer ? (
           <Image
-            source={{ uri: viewer.startsWith("http") ? viewer : `${apiBaseUrl()}${viewer}`, headers: token ? { Authorization: `Bearer ${token}` } : undefined }}
+            source={{
+              uri: viewer.startsWith("http") ? viewer : `${apiBaseUrl()}${viewer}`,
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            }}
             style={{ width: "100%", height: 280 }}
             contentFit="contain"
           />
@@ -363,3 +784,31 @@ export default function StockScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  tab: { alignSelf: "flex-start", flexDirection: "row" },
+  section: { marginTop: 20 },
+  sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+  sectionLabel: {
+    fontFamily: "Mukta_600SemiBold",
+    fontSize: 12,
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    color: colors.muted,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  rowMain: { flex: 1 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  rowTitle: { fontFamily: "Mukta_600SemiBold", fontSize: 16, color: colors.ink },
+  rowSub: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 4 },
+  fieldHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  quietLabel: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted },
+});

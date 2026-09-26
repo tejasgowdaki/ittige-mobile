@@ -7,7 +7,8 @@ import { apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { getFirebaseAuth, getFirebaseConfig, isFirebaseClientConfigured } from "@/lib/firebase";
 import { formatPhoneDisplay, normalizePhone } from "@/shared";
-import { Button, Copy, ErrorText, Field, TextField } from "@/components/ui";
+import { IconCheck, IconSend } from "@/components/icons";
+import { Button, Copy, ErrorText, Field, PhoneField, TextField } from "@/components/ui";
 import { colors } from "@/theme";
 
 type Mode = "sign-in" | "sign-up";
@@ -139,8 +140,10 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
   if (step === "code") {
     return (
       <View>
-        <Copy>{`Code sent to ${pendingPhone ? formatPhoneDisplay(pendingPhone) : ""}`}</Copy>
-        <Field label="OTP">
+        <Text style={styles.sent}>
+          Code sent to <Text style={styles.sentStrong}>{pendingPhone ? formatPhoneDisplay(pendingPhone) : ""}</Text>
+        </Text>
+        <Field label="OTP" quiet>
           <TextField
             value={code}
             keyboardType="number-pad"
@@ -148,7 +151,14 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
           />
         </Field>
         <ErrorText>{error}</ErrorText>
-        <Button label="Verify & continue" pending={saving} disabled={code.trim().length < 4} onPress={() => void verifyCode()} />
+        <Button
+          label="Verify & continue"
+          pending={saving}
+          pendingLabel="Verifying…"
+          disabled={code.trim().length < 4}
+          icon={<IconCheck size={16} color={colors.accentInk} />}
+          onPress={() => void verifyCode()}
+        />
         <Button
           label="Change number"
           secondary
@@ -166,23 +176,14 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
   return (
     <View>
       {devAuth.enabled ? <Text style={styles.dev}>Dev OTP enabled — no SMS sent</Text> : null}
-      <Field label="Phone">
-        <View style={styles.phone}>
-          <Text style={styles.prefix}>+91</Text>
-          <TextField
-            value={localNumber}
-            keyboardType="number-pad"
-            placeholder="9876543210"
-            onChangeText={(value) => setLocalNumber(value.replace(/\D/g, "").slice(0, 10))}
-            style={styles.phoneInput}
-          />
-        </View>
-      </Field>
+      <PhoneField value={localNumber} onChangeText={setLocalNumber} />
       <ErrorText>{error}</ErrorText>
       <Button
         label={devAuth.enabled ? "Continue" : "Send OTP"}
         pending={saving}
+        pendingLabel="Sending…"
         disabled={localNumber.length !== 10}
+        icon={<IconSend size={16} color={colors.accentInk} />}
         onPress={() => void sendCode()}
       />
       <Pressable onPress={() => router.replace(mode === "sign-in" ? "/sign-up" : "/sign-in")}>
@@ -205,14 +206,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     marginBottom: 12,
   },
-  phone: { flexDirection: "row", alignItems: "center", gap: 8 },
-  prefix: { fontFamily: "Mukta_700Bold", color: colors.ink, fontSize: 16 },
-  phoneInput: { flex: 1 },
+  sent: { fontFamily: "Mukta_400Regular", fontSize: 16, lineHeight: 24, color: colors.muted, marginBottom: 8 },
+  sentStrong: { fontFamily: "Mukta_700Bold", color: colors.ink },
   switchLink: {
     textAlign: "center",
-    marginTop: 16,
+    marginTop: 4,
     color: colors.muted,
-    fontFamily: "Mukta_500Medium",
+    fontFamily: "Mukta_400Regular",
+    fontSize: 16,
   },
   web: { height: 420 },
 });
