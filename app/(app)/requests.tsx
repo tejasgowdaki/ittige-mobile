@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DateField } from "@/components/date-field";
@@ -21,7 +22,7 @@ import {
 import { apiFetch } from "@/lib/api-client";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
 import { formatDisplayDate, toDateKey } from "@/lib/dates";
-import { actionableCounts, sentFromSource } from "@/lib/request-actions";
+import { pendingActionCount, sentFromSource } from "@/lib/request-actions";
 import { queryKeys } from "@/lib/query-keys";
 import {
   useGodownsQuery,
@@ -77,20 +78,6 @@ type RequestRow = {
   rejectionNote: string | null;
   lines: RequestLine[];
   transfers: TransferRow[];
-};
-type PlanningNeed = {
-  requestId: string;
-  neededBy: string;
-  qtyRemaining: number;
-  project: { name: string; code: string };
-  space: { name: string; floor: number } | null;
-  material: { name: string; uom: string };
-  sources: {
-    purchase: boolean;
-    supplierName: string | null;
-    stockLocation: LocationRef | null;
-    qtyRemaining: number;
-  }[];
 };
 type StockBalance = {
   quantity: string | number;
@@ -150,6 +137,8 @@ function statusLabel(status: string) {
 }
 
 export default function RequestsScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ new?: string | string[] }>();
   const { companyId, me } = useCompany();
   const gate = useCompanyGate();
   const queryClient = useQueryClient();
@@ -159,7 +148,6 @@ export default function RequestsScreen() {
   const canTransfer = TRANSFER_CODES.some((code) => permissions.includes(code));
   const myId = me?.id ?? "";
 
-  const [view, setView] = useState<"requests" | "planning">("requests");
   const [statuses, setStatuses] = useState<string[]>(DEFAULT_STATUSES);
   const [statusOpen, setStatusOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -179,6 +167,15 @@ export default function RequestsScreen() {
   const [approvalLines, setApprovalLines] = useState<DraftApproval[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const openedFromQuery = useRef("");
+  const newToken = Array.isArray(params.new) ? params.new[0] ?? "" : params.new ?? "";
+  useEffect(() => {
+    if (!newToken || !canRaise || openedFromQuery.current === newToken) return;
+    openedFromQuery.current = newToken;
+    setError(null);
+    setOpen(true);
+    router.setParams({ new: "" });
+  }, [newToken, canRaise, router]);
 
   const projectsQuery = useProjectsQuery(ready);
   const materialsQuery = useMaterialsQuery(ready);
@@ -198,18 +195,10 @@ export default function RequestsScreen() {
       ),
     enabled: Boolean(companyId && projectId && open),
   });
-  const planningQuery = useQuery({
-    queryKey: ["planning", companyId],
-    queryFn: () =>
-      apiFetch<{ needs: PlanningNeed[] }>("/api/v1/planning", { companyId }).then((payload) => payload.needs),
-    enabled: ready,
-  });
-
   const projects = projectsQuery.data ?? [];
   const materials = materialsQuery.data ?? [];
   const godowns = godownsQuery.data ?? [];
   const requests = requestsQuery.data ?? [];
-  const actionable = actionableCounts(requests, myId, canTransfer);
   const visible = requests.filter((request) => statuses.length === 0 || statuses.includes(request.status));
   const selectedStatuses = STATUS_OPTIONS.filter((option) => statuses.includes(option.value));
   const statusFilterLabel =
@@ -219,28 +208,6 @@ export default function RequestsScreen() {
         ? selectedStatuses.map((option) => option.label).join(" · ")
         : `${selectedStatuses.length} statuses`;
   const selected = requests.find((request) => request.id === selectedId) ?? null;
-
-  const planningGroups = new Map<string, Map<string, PlanningNeed[]>>();
-  for (const need of planningQuery.data ?? []) {
-    const dateKey = toDateKey(need.neededBy);
-    const bySource = planningGroups.get(dateKey) ?? new Map<string, PlanningNeed[]>();
-    const openSources = need.sources.filter((source) => source.qtyRemaining > 0.0000001);
-    const buckets =
-      openSources.length > 0
-        ? openSources
-        : [{ purchase: false, supplierName: null, stockLocation: null, qtyRemaining: need.qtyRemaining }];
-    for (const source of buckets) {
-      const name = source.stockLocation
-        ? locationName(source.stockLocation)
-        : source.purchase
-          ? purchaseLabel(source.supplierName)
-          : "Waiting to be received";
-      const rows = bySource.get(name) ?? [];
-      rows.push(need);
-      bySource.set(name, rows);
-    }
-    planningGroups.set(dateKey, bySource);
-  }
 
   function closeForm() {
     setOpen(false);
@@ -265,7 +232,6 @@ export default function RequestsScreen() {
     if (!companyId) return;
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.materialRequests(companyId) }),
-      queryClient.invalidateQueries({ queryKey: ["planning", companyId] }),
       queryClient.invalidateQueries({ queryKey: queryKeys.stock(companyId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.transfers(companyId) }),
     ]);
@@ -497,112 +463,55 @@ export default function RequestsScreen() {
       </View>
 
       <View style={styles.filterRow}>
-        <TextLink
-          label="Requests"
-          count={actionable.requests > 0 ? actionable.requests : undefined}
-          active={view === "requests"}
-          onPress={() => setView("requests")}
-        />
-        <TextLink
-          label="Planning"
-          count={actionable.planning > 0 ? actionable.planning : undefined}
-          active={view === "planning"}
-          onPress={() => setView("planning")}
-        />
+        <Text style={styles.filterLabel}>Status</Text>
+        <TextLink label={statusFilterLabel} active={statuses.length > 0} onPress={() => setStatusOpen(true)} />
+        {statuses.length > 0 ? (
+          <Pressable accessibilityLabel="Clear status filter" onPress={() => setStatuses([])} style={styles.clearHit}>
+            <IconClose size={12} color={colors.muted} />
+          </Pressable>
+        ) : null}
       </View>
-
-      {view === "requests" ? (
-        <View style={styles.filterRow}>
-          <Text style={styles.filterLabel}>Status</Text>
-          <TextLink label={statusFilterLabel} active={statuses.length > 0} onPress={() => setStatusOpen(true)} />
-          {statuses.length > 0 ? (
-            <Pressable accessibilityLabel="Clear status filter" onPress={() => setStatuses([])} style={styles.clearHit}>
-              <IconClose size={12} color={colors.muted} />
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
 
       <ErrorText>{pageError}</ErrorText>
 
-      {view === "planning" ? (
-        <View style={styles.section}>
-          {planningQuery.isPending ? <Empty>Loading…</Empty> : null}
-          {!planningQuery.isPending && planningGroups.size === 0 ? <Empty>Nothing left to move.</Empty> : null}
-          {[...planningGroups.entries()].map(([dateKey, sources]) => (
-            <View key={dateKey} style={styles.dayBlock}>
-              <Text style={styles.sectionLabel}>{formatDisplayDate(dateKey)}</Text>
-              {[...sources.entries()].map(([source, needs]) => (
-                <View key={source}>
-                  <Text style={styles.sourceTitle}>{source}</Text>
-                  {needs.map((need) => {
-                    const sourceQty =
-                      need.sources.find((item) => {
-                        const name = item.stockLocation
-                          ? locationName(item.stockLocation)
-                          : item.purchase
-                            ? purchaseLabel(item.supplierName)
-                            : "Waiting to be received";
-                        return name === source;
-                      })?.qtyRemaining ?? need.qtyRemaining;
-                    return (
-                      <View key={`${need.requestId}-${need.material.name}-${source}`} style={styles.row}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.rowTitle}>{need.material.name}</Text>
-                          <Text style={styles.rowSub}>
-                            {sourceQty} {need.material.uom} · {need.project.name}
-                            {spaceLabel(need.space) ? ` · ${spaceLabel(need.space)}` : ""}
-                          </Text>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              ))}
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      {view === "requests" ? (
-        <View style={styles.section}>
-          {visible.length === 0 ? (
-            <Empty>{requests.length === 0 ? "No requests yet." : "No requests in these statuses."}</Empty>
-          ) : null}
-          {visible.map((request) => {
-            const mine = request.status === "SUBMITTED" && request.assignee?.id === myId;
-            return (
-              <Pressable
-                key={request.id}
-                style={styles.row}
-                onPress={() => {
-                  setError(null);
-                  setConfirmDelete(false);
-                  setConfirmReject(false);
-                  setRejectNote("");
-                  setSelectedId(request.id);
-                }}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle}>
-                    {request.project.name}
-                    {request.space ? ` · ${spaceLabel(request.space)}` : ""}
+      <View style={styles.section}>
+        {visible.length === 0 ? (
+          <Empty>{requests.length === 0 ? "No requests yet." : "No requests in these statuses."}</Empty>
+        ) : null}
+        {visible.map((request) => {
+          const pending = pendingActionCount(request, myId, canTransfer) > 0;
+          return (
+            <Pressable
+              key={request.id}
+              style={[styles.row, pending && styles.rowAction]}
+              onPress={() => {
+                setError(null);
+                setConfirmDelete(false);
+                setConfirmReject(false);
+                setRejectNote("");
+                setSelectedId(request.id);
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>
+                  {request.project.name}
+                  {request.space ? ` · ${spaceLabel(request.space)}` : ""}
+                </Text>
+                <Text style={styles.rowSub}>
+                  <Text style={pending ? styles.flag : undefined}>
+                    {pending ? "Pending action" : statusLabel(request.status)}
                   </Text>
-                  <Text style={styles.rowSub}>
-                    <Text style={mine ? styles.flag : undefined}>
-                      {mine ? "Needs your approval" : statusLabel(request.status)}
-                    </Text>
-                    {` · ${formatDisplayDate(toDateKey(request.neededBy))} · ${request.lines
-                      .map((line) => `${qty(line.qtyRequested)} ${line.material.uom} ${line.material.name}`)
-                      .join(", ")}`}
-                  </Text>
-                </View>
-                {mine ? <Badge>Approve</Badge> : null}
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+                  {pending ? ` · ${statusLabel(request.status)}` : ""}
+                  {` · ${formatDisplayDate(toDateKey(request.neededBy))} · ${request.lines
+                    .map((line) => `${qty(line.qtyRequested)} ${line.material.uom} ${line.material.name}`)
+                    .join(", ")}`}
+                </Text>
+              </View>
+              {pending ? <Badge>Action required</Badge> : null}
+            </Pressable>
+          );
+        })}
+      </View>
 
       <Sheet open={statusOpen} title="Select status" onClose={() => setStatusOpen(false)}>
         {STATUS_OPTIONS.map((option) => {
@@ -1058,6 +967,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
   },
+  rowAction: { borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: 10 },
   rowTitle: { fontFamily: "Mukta_600SemiBold", fontSize: 16, color: colors.ink },
   rowSub: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 4 },
   flag: { color: colors.accent, fontFamily: "Mukta_600SemiBold" },

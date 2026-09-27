@@ -66,8 +66,9 @@ export function AppHeader() {
     <View style={styles.header}>
       <View style={{ flex: 1 }}>
         <View style={styles.brandRow}>
-          <Text style={[styles.brand, styles.amp]}>I</Text>
-          <Text style={styles.brand}>ttige</Text>
+          <Text style={styles.brand}>Stock</Text>
+          <Text style={[styles.brand, styles.amp]}>&</Text>
+          <Text style={styles.brand}>Site</Text>
         </View>
         {companyName ? <Text style={styles.company}>{companyName}</Text> : null}
       </View>
@@ -191,7 +192,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingTop: __DEV__ ? 52 : 18,
+    paddingTop: 8,
     paddingHorizontal: 18,
     paddingBottom: 8,
     backgroundColor: colors.bg,
@@ -200,7 +201,7 @@ const styles = StyleSheet.create({
   brand: {
     fontFamily: "Mukta_800ExtraBold",
     fontSize: 26,
-    lineHeight: 44,
+    lineHeight: 32,
     letterSpacing: -0.6,
     color: colors.ink,
     paddingRight: 2,

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
@@ -111,6 +112,8 @@ function entrySummary(entry: Entry) {
 }
 
 export default function ProgressScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{ new?: string | string[] }>();
   const { companyId, me } = useCompany();
   const gate = useCompanyGate();
   const queryClient = useQueryClient();
@@ -208,6 +211,16 @@ export default function ProgressScreen() {
     setFieldErrors({});
     setError(null);
   }
+
+  const openedFromQuery = useRef("");
+  const newToken = Array.isArray(params.new) ? params.new[0] ?? "" : params.new ?? "";
+  useEffect(() => {
+    if (!newToken || openedFromQuery.current === newToken) return;
+    openedFromQuery.current = newToken;
+    resetLogForm();
+    setOpen(true);
+    router.setParams({ new: "" });
+  }, [newToken, router]);
 
   function closeLog() {
     setOpen(false);

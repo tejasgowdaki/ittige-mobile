@@ -36,7 +36,7 @@ function useRequestsMenuCount() {
   const permissions = me?.companies.find((company) => company.id === companyId)?.permissions ?? [];
   const canTransfer = TRANSFER_CODES.some((code) => permissions.includes(code));
   const actionable = actionableCounts(requestsQuery.data ?? [], me?.id ?? "", canTransfer);
-  return actionable.requests + actionable.planning;
+  return actionable.pending;
 }
 
 const MENU = [

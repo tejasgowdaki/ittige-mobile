@@ -4,7 +4,7 @@ export function Logo({ size, style }: { size: number; style?: StyleProp<ImageSty
   return (
     <Image
       source={require("../../assets/icon.png")}
-      accessibilityLabel="Ittige"
+      accessibilityLabel="Stock and Site"
       style={[{ width: size, height: size, borderRadius: size * 0.22 }, style]}
     />
   );

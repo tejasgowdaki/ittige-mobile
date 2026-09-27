@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { Text, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { IconClose, IconPlus } from "@/components/icons";
 import { OnboardingForm } from "@/components/onboarding-form";
 import { Button, Copy, Empty, ErrorText, FilterLink, Label, Row, Screen, Title } from "@/components/ui";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
@@ -99,6 +100,7 @@ export default function HomeScreen() {
   const [feed, setFeed] = useState<"progress" | "stock" | "transfers">("progress");
   const permissions = me?.companies.find((company) => company.id === companyId)?.permissions ?? [];
   const canReadStock = permissions.includes(PERMISSIONS.STOCK_READ);
+  const canRaise = permissions.includes(PERMISSIONS.PROJECTS_MANAGE);
 
   const projectsQuery = useProjectsQuery(ready);
   const settingsQuery = useSettingsQuery<{ defaultAreaUnit: AreaUnitCode }>(ready);
@@ -150,18 +152,19 @@ export default function HomeScreen() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <Screen>
       <Title>Today</Title>
       <Copy>Projects, progress, and stock in one place.</Copy>
       {projectsQuery.error ? (
         <ErrorText>{projectsQuery.error instanceof Error ? projectsQuery.error.message : "Could not load projects"}</ErrorText>
       ) : null}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 28, marginTop: 28, marginBottom: 8 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 28, marginTop: 12 }}>
         <Metric value={String(activeCount)} label="Active projects" />
         {completedCount > 0 ? <Metric value={String(completedCount)} label="Completed projects" /> : null}
         <Metric value={formatAreaValue(totalArea)} unit={areaUnitSymbol(defaultUnit)} label="Area built" />
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 28 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
         <Label>Recent projects</Label>
         <FilterLink label="View all" muted trailing onPress={() => router.push("/projects")} />
       </View>
@@ -238,7 +241,75 @@ export default function HomeScreen() {
           ))
         : null}
       {feed === "transfers" && !transfersQuery.isPending && todayTransfers.length === 0 ? <Empty>No transfers today.</Empty> : null}
+      <View style={{ height: 72 }} />
     </Screen>
+    <HomeAdd canRaise={canRaise} />
+    </View>
+  );
+}
+
+function HomeAdd({ canRaise }: { canRaise: boolean }) {
+  const router = useRouter();
+  const window = useWindowDimensions();
+  const buttonRef = useRef<View>(null);
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 56, height: 56 });
+  useFocusEffect(
+    useCallback(() => {
+      return () => setOpen(false);
+    }, []),
+  );
+
+  function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const node = buttonRef.current;
+    if (!node) {
+      setOpen(true);
+      return;
+    }
+    node.measureInWindow((x, y, width, height) => {
+      if (width > 0 && height > 0) setAnchor({ x, y, width, height });
+      setOpen(true);
+    });
+  }
+
+  function openForm(path: "/progress" | "/requests") {
+    setOpen(false);
+    router.push(`${path}?new=${Date.now()}`);
+  }
+
+  const right = Math.max(0, window.width - (anchor.x + anchor.width));
+  const bottom = Math.max(0, window.height - (anchor.y + anchor.height));
+
+  return (
+    <>
+      <View ref={buttonRef} collapsable={false} style={[fabStyles.wrap, open && fabStyles.hidden]} pointerEvents={open ? "none" : "box-none"}>
+        <Pressable accessibilityLabel="Add" accessibilityRole="button" style={fabStyles.button} onPress={toggle}>
+          <IconPlus size={22} color={colors.accentInk} />
+        </Pressable>
+      </View>
+      <Modal visible={open} transparent animationType="none" statusBarTranslucent onRequestClose={() => setOpen(false)}>
+        <View style={fabStyles.modalRoot}>
+          <Pressable style={[StyleSheet.absoluteFill, fabStyles.scrim]} onPress={() => setOpen(false)} />
+          <View style={[fabStyles.modalMenu, { right, bottom }]}>
+            <Pressable style={fabStyles.option} onPress={() => openForm("/progress")}>
+              <Text style={fabStyles.optionText}>Log progress</Text>
+            </Pressable>
+            {canRaise ? (
+              <Pressable style={fabStyles.option} onPress={() => openForm("/requests")}>
+                <Text style={fabStyles.optionText}>Raise request</Text>
+              </Pressable>
+            ) : null}
+            <Pressable accessibilityLabel="Close" accessibilityRole="button" style={fabStyles.button} onPress={() => setOpen(false)}>
+              <IconClose size={22} color={colors.accentInk} />
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -253,3 +324,50 @@ function Metric({ value, unit, label }: { value: string; unit?: string; label: s
     </View>
   );
 }
+
+const fabStyles = StyleSheet.create({
+  wrap: {
+    position: "absolute",
+    right: 18,
+    bottom: 16,
+    zIndex: 30,
+    alignItems: "flex-end",
+  },
+  hidden: { opacity: 0 },
+  modalRoot: { flex: 1 },
+  scrim: { backgroundColor: "rgba(0,0,0,0.01)" },
+  modalMenu: {
+    position: "absolute",
+    zIndex: 2,
+    alignItems: "flex-end",
+    gap: 10,
+  },
+  option: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.elevated,
+    justifyContent: "center",
+    shadowColor: "#3a2218",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  optionText: { fontFamily: "Mukta_600SemiBold", fontSize: 15, color: colors.ink },
+  button: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#3a2218",
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+});

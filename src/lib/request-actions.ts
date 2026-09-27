@@ -45,26 +45,29 @@ export function sentFromSource(
     }, 0);
 }
 
-export function actionableCounts(requests: ActionRequest[], myId: string, canTransfer: boolean) {
-  let approval = 0;
-  let planning = 0;
-  for (const request of requests) {
-    if (request.status === "SUBMITTED" && canTransfer && request.requestedBy.id !== myId) {
-      approval += request.lines.length;
-    }
-    if (canTransfer && (request.status === "APPROVED" || request.status === "PARTIALLY_FULFILLED")) {
-      for (const line of request.lines) {
-        for (const allocation of line.allocations) {
-          const left = qty(allocation.qtyAllocated) - sentFromSource(request, line.materialId, allocation);
-          if (left > 0.0000001) planning += 1;
-        }
-      }
-    }
-    if (request.requestedBy.id === myId) {
-      for (const transfer of request.transfers ?? []) {
-        if (transfer.status === "DISPATCHED") planning += transfer.lines.length;
+export function pendingActionCount(request: ActionRequest, myId: string, canTransfer: boolean) {
+  let count = 0;
+  if (request.status === "SUBMITTED" && canTransfer && request.requestedBy.id !== myId) {
+    count += request.lines.length;
+  }
+  if (canTransfer && (request.status === "APPROVED" || request.status === "PARTIALLY_FULFILLED")) {
+    for (const line of request.lines) {
+      for (const allocation of line.allocations) {
+        const left = qty(allocation.qtyAllocated) - sentFromSource(request, line.materialId, allocation);
+        if (left > 0.0000001) count += 1;
       }
     }
   }
-  return { requests: approval, planning };
+  if (request.requestedBy.id === myId) {
+    for (const transfer of request.transfers ?? []) {
+      if (transfer.status === "DISPATCHED") count += transfer.lines.length;
+    }
+  }
+  return count;
+}
+
+export function actionableCounts(requests: ActionRequest[], myId: string, canTransfer: boolean) {
+  return {
+    pending: requests.reduce((sum, request) => sum + pendingActionCount(request, myId, canTransfer), 0),
+  };
 }

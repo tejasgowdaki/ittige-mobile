@@ -71,12 +71,15 @@ export default function Index() {
       <HeroBackdrop />
       <View style={styles.inner}>
         <Text style={styles.eyebrow}>Field to office</Text>
-        <View style={styles.brandRow}>
-          <Text style={[styles.brand, styles.mark]}>I</Text>
-          <Text style={styles.brand}>ttige</Text>
+        <View style={styles.brandBlock}>
+          <View style={styles.brandRow}>
+            <Text style={styles.brand}>Stock</Text>
+            <Text style={[styles.brand, styles.mark]}>&</Text>
+          </View>
+          <Text style={styles.brand}>Site</Text>
         </View>
         <HeroLine />
-        <Text style={styles.copy}>One app for godowns, project stock, progress by area, and schedule health.</Text>
+        <Text style={styles.copy}>Build faster. Track smarter. Manage everything</Text>
         <View style={styles.actions}>
           <Pressable style={styles.primary} onPress={() => router.push("/sign-in")}>
             <Text style={styles.primaryText}>Sign in with phone</Text>
@@ -102,12 +105,13 @@ const styles = StyleSheet.create({
     paddingRight: 6,
     fontFamily: "Mukta_500Medium",
   },
-  brandRow: { flexDirection: "row", alignItems: "flex-end", marginTop: 6 },
+  brandBlock: { marginTop: 6 },
+  brandRow: { flexDirection: "row", alignItems: "flex-end" },
   brand: {
     fontFamily: "Mukta_800ExtraBold",
-    fontSize: 64,
-    lineHeight: 84,
-    letterSpacing: -2,
+    fontSize: 56,
+    lineHeight: 72,
+    letterSpacing: -1.4,
     color: colors.ink,
   },
   mark: { color: colors.accent },

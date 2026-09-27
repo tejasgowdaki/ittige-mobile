@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Ittige",
+    "name": "Stock and Site",
     "slug": "stock-and-site-mobile",
     "scheme": "stockinsight",
     "version": "1.0.0",
@@ -40,8 +40,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Ittige uses your photos on site logs and transfers.",
-          "cameraPermission": "Ittige uses the camera for site and stock photos."
+          "photosPermission": "Stock and Site uses your photos on site logs and transfers.",
+          "cameraPermission": "Stock and Site uses the camera for site and stock photos."
         }
       ]
     ]
