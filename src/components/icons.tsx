@@ -218,6 +218,16 @@ export function IconInbox({ size, color = "#3a2218" }: IconProps) {
   );
 }
 
+export function IconMore({ size, color = "#3a2218" }: IconProps) {
+  return (
+    <Mark size={size}>
+      <Circle cx="6" cy="12" r="1.6" fill={color} />
+      <Circle cx="12" cy="12" r="1.6" fill={color} />
+      <Circle cx="18" cy="12" r="1.6" fill={color} />
+    </Mark>
+  );
+}
+
 export function IconActivity({ size, color = "#3a2218" }: IconProps) {
   return (
     <Mark size={size} color={color}>

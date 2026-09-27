@@ -1,8 +1,9 @@
+import { useRef, useState } from "react";
 import { Tabs } from "expo-router";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppHeader } from "@/components/app-header";
-import { IconActivity, IconHome, IconProgress, IconProjects, IconRequests, IconStock } from "@/components/icons";
+import { IconHome, IconMore, IconProgress, IconProjects, IconRequests, IconStock } from "@/components/icons";
 import { CompanyProvider, useCompany } from "@/lib/company-context";
 import { actionableCounts } from "@/lib/request-actions";
 import { useMaterialRequestsQuery } from "@/lib/queries";
@@ -45,7 +46,6 @@ const MENU = [
   { name: "progress", title: "Progress", Icon: IconProgress },
   { name: "stock", title: "Stock", Icon: IconStock },
   { name: "requests", title: "Requests", Icon: IconRequests },
-  { name: "activity", title: "Activity", Icon: IconActivity },
 ] as const;
 
 function MenuIcon({
@@ -88,6 +88,43 @@ function MenuBar({
   insets: { bottom: number };
   pending: number;
 }) {
+  const { me, companyId } = useCompany();
+  const window = useWindowDimensions();
+  const moreRef = useRef<View>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [anchor, setAnchor] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const isAdmin = me?.companies.find((company) => company.id === companyId)?.companyRole === "ADMIN";
+  const currentRoute = state.routes[state.index]?.name;
+  const moreActive = currentRoute === "activity" || currentRoute === "team";
+
+  function toggleMore() {
+    if (moreOpen) {
+      setMoreOpen(false);
+      return;
+    }
+    const node = moreRef.current;
+    if (!node) {
+      setMoreOpen(true);
+      return;
+    }
+    node.measureInWindow((x, y, width, height) => {
+      if (width > 0 && height > 0) setAnchor({ x, y, width, height });
+      setMoreOpen(true);
+    });
+  }
+
+  function openMoreItem(name: "activity" | "team") {
+    setMoreOpen(false);
+    if (currentRoute === name) return;
+    const route = state.routes.find((entry) => entry.name === name);
+    if (!route) return;
+    const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
+    if (!event.defaultPrevented) navigation.navigate(name);
+  }
+
+  const menuRight = Math.max(0, window.width - (anchor.x + anchor.width));
+  const menuBottom = Math.max(0, window.height - anchor.y + 8);
+
   return (
     <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {MENU.map((item) => {
@@ -110,7 +147,7 @@ function MenuBar({
             <View style={[styles.tabPill, focused && styles.tabPillActive]}>
               <MenuIcon name={item.name} Icon={item.Icon} color={color} focused={focused} count={pending} />
               <Text
-                style={[styles.tabLabel, (item.name === "requests" || item.name === "activity") && styles.tabLabelTight, { color }]}
+                style={[styles.tabLabel, item.name === "requests" && styles.tabLabelTight, { color }]}
                 numberOfLines={1}
               >
                 {item.title}
@@ -119,6 +156,35 @@ function MenuBar({
           </Pressable>
         );
       })}
+      <View ref={moreRef} collapsable={false} style={styles.tabHit}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: moreActive, expanded: moreOpen }}
+          accessibilityLabel="More"
+          onPress={toggleMore}
+          style={styles.tabHit}
+        >
+          <View style={[styles.tabPill, moreActive && styles.tabPillActive]}>
+            <IconMore color={moreActive ? colors.accentInk : colors.muted} size={18} />
+            <Text style={[styles.tabLabel, { color: moreActive ? colors.accentInk : colors.muted }]}>More</Text>
+          </View>
+        </Pressable>
+      </View>
+      <Modal visible={moreOpen} transparent animationType="none" statusBarTranslucent onRequestClose={() => setMoreOpen(false)}>
+        <View style={styles.moreRoot}>
+          <Pressable style={[StyleSheet.absoluteFill, styles.moreScrim]} onPress={() => setMoreOpen(false)} />
+          <View style={[styles.moreMenu, { right: menuRight, bottom: menuBottom }]}>
+            <Pressable style={styles.moreOption} onPress={() => openMoreItem("activity")}>
+              <Text style={styles.moreOptionText}>Activity</Text>
+            </Pressable>
+            {isAdmin ? (
+              <Pressable style={styles.moreOption} onPress={() => openMoreItem("team")}>
+                <Text style={styles.moreOptionText}>Users</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -192,6 +258,24 @@ const styles = StyleSheet.create({
   },
   badgeTextActive: { color: colors.accent },
   badgeTextIdle: { color: colors.accentInk },
+  moreRoot: { flex: 1 },
+  moreScrim: { backgroundColor: "rgba(0,0,0,0.01)" },
+  moreMenu: { position: "absolute", alignItems: "flex-end", gap: 8, zIndex: 2 },
+  moreOption: {
+    minHeight: 40,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.elevated,
+    justifyContent: "center",
+    shadowColor: "#3a2218",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  moreOptionText: { fontFamily: "Mukta_600SemiBold", fontSize: 15, color: colors.ink },
 });
 
 export default function AppLayout() {

@@ -1,18 +1,16 @@
 import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiFetch, type MeResponse } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useCompany } from "@/lib/company-context";
 import { queryKeys } from "@/lib/query-keys";
 import { formatPhoneDisplay, normalizePhone } from "@/shared";
-import { IconLogout, IconSave, IconTeam, IconUser } from "@/components/icons";
+import { IconLogout, IconSave, IconUser } from "@/components/icons";
 import { Badge, Empty, ErrorText, Field, PhoneField, Row, SelectField, Sheet, TextField } from "@/components/ui";
 import { colors } from "@/theme";
 
 export function AppHeader() {
-  const router = useRouter();
   const { companyName, me, companyId, setCompanyId } = useCompany();
   const { signOut } = useAuth();
   const queryClient = useQueryClient();
@@ -108,16 +106,6 @@ export function AppHeader() {
                 setSheet("profile");
               }}
             />
-            {isAdmin ? (
-              <MenuItem
-                icon={<IconTeam size={16} color={colors.ink} />}
-                label="Users"
-                onPress={() => {
-                  setSheet(null);
-                  router.push("/team");
-                }}
-              />
-            ) : null}
             <MenuItem
               icon={<IconLogout size={16} color={colors.ink} />}
               label={signingOut ? "Signing out…" : "Sign out"}
