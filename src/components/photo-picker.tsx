@@ -81,7 +81,7 @@ const styles = StyleSheet.create({
   field: { marginBottom: 12 },
   label: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginBottom: 6 },
   empty: {
-    minHeight: 132,
+    minHeight: 72,
     borderWidth: 1,
     borderStyle: "dashed",
     borderColor: colors.line,
@@ -89,7 +89,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 10,
     padding: 16,
   },
   iconBox: {

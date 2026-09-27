@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 import { DateCalendar } from "@/components/date-field";
 import { IconClose, IconFilter } from "@/components/icons";
-import { CheckBox, Copy, Empty, Screen, Sheet, Title } from "@/components/ui";
+import { Button, CheckBox, Copy, Empty, Screen, Sheet, Title } from "@/components/ui";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
 import { formatDisplayDate, toDateKey } from "@/lib/dates";
 import { useActivityQuery, useMembersQuery } from "@/lib/queries";
@@ -43,6 +44,7 @@ function formatChangeValue(value: unknown) {
 }
 
 export default function ActivityScreen() {
+  const router = useRouter();
   const { companyId, me } = useCompany();
   const gate = useCompanyGate();
   const ready = !gate.needsOnboarding && Boolean(companyId);
@@ -65,7 +67,14 @@ export default function ActivityScreen() {
   );
 
   if (gate.loading) return <Screen><Empty>Loading…</Empty></Screen>;
-  if (gate.needsOnboarding) return <Screen><Empty>Set up your company first.</Empty></Screen>;
+  if (gate.needsOnboarding) {
+    return (
+      <Screen>
+        <Empty>Set up your company first.</Empty>
+        <Button label="Go home" onPress={() => router.replace("/")} />
+      </Screen>
+    );
+  }
 
   const events = activityQuery.data?.events ?? [];
   const people = membersQuery.data?.memberships ?? [];
@@ -254,7 +263,7 @@ function TextLink({
 }
 
 const styles = StyleSheet.create({
-  section: { marginTop: 20 },
+  section: { marginTop: 28 },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   sectionActions: { flexDirection: "row", alignItems: "center", gap: 10 },
   sectionLabel: {
@@ -267,12 +276,12 @@ const styles = StyleSheet.create({
   filterBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   filterBadge: {
     position: "absolute",
-    top: 0,
-    right: 0,
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 3,
-    borderRadius: 8,
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
     backgroundColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",

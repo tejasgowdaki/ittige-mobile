@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { IconPlus } from "@/components/icons";
 import { Button, ErrorText, Field, TextField } from "@/components/ui";
 import { useCompany } from "@/lib/company-context";
+import { colors } from "@/theme";
 
 export function OnboardingForm() {
   const { createCompany } = useCompany();
@@ -9,7 +11,7 @@ export function OnboardingForm() {
   const [error, setError] = useState<string | null>(null);
 
   async function submit() {
-    if (!name.trim()) {
+    if (name.trim().length < 2) {
       setError("Company name is required");
       return;
     }
@@ -27,10 +29,17 @@ export function OnboardingForm() {
   return (
     <>
       <Field label="Company name">
-        <TextField value={name} onChangeText={setName} />
+        <TextField value={name} onChangeText={setName} placeholder="Acme Builders" />
       </Field>
       <ErrorText>{error}</ErrorText>
-      <Button label="Create company" pending={saving} onPress={() => void submit()} />
+      <Button
+        label="Create company"
+        pending={saving}
+        pendingLabel="Creating…"
+        disabled={name.trim().length < 2}
+        icon={<IconPlus size={16} color={colors.accentInk} />}
+        onPress={() => void submit()}
+      />
     </>
   );
 }

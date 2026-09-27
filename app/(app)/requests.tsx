@@ -452,10 +452,14 @@ export default function RequestsScreen() {
     }
   }
 
-  if (gate.loading) return <Screen><Empty>Loading…</Empty></Screen>;
+  if (gate.loading || (ready && requestsQuery.isPending && !requestsQuery.data)) {
+    return <Screen><Empty>Loading…</Empty></Screen>;
+  }
 
-  const sheetError = open || selected || approving ? error : null;
-  const pageError = !open && !selected && !approving ? error || (requestsQuery.error instanceof Error ? requestsQuery.error.message : null) : null;
+  const sheetOpen = Boolean(open || selected || approving);
+  const loadError = requestsQuery.error instanceof Error ? requestsQuery.error.message : null;
+  const sheetError = sheetOpen ? error : null;
+  const pageError = loadError || (!sheetOpen ? error : null);
   const canAct =
     selected && selected.status === "SUBMITTED" && canTransfer && selected.requestedBy.id !== myId;
   const canDelete =
@@ -512,7 +516,7 @@ export default function RequestsScreen() {
           <Text style={styles.filterLabel}>Status</Text>
           <TextLink label={statusFilterLabel} active={statuses.length > 0} onPress={() => setStatusOpen(true)} />
           {statuses.length > 0 ? (
-            <Pressable accessibilityLabel="Clear status filter" onPress={() => setStatuses([])} hitSlop={8}>
+            <Pressable accessibilityLabel="Clear status filter" onPress={() => setStatuses([])} style={styles.clearHit}>
               <IconClose size={12} color={colors.muted} />
             </Pressable>
           ) : null}
@@ -739,7 +743,7 @@ export default function RequestsScreen() {
               confirmReject ? (
                 <>
                   <Field label="Note (optional)" quiet>
-                    <TextField value={rejectNote} onChangeText={setRejectNote} multiline />
+                    <TextField value={rejectNote} onChangeText={setRejectNote} multiline maxLength={500} />
                   </Field>
                   <Button label="Reject" pending={saving} pendingLabel="Rejecting…" onPress={() => void reject(selected.id)} />
                   <Button
@@ -928,6 +932,7 @@ export default function RequestsScreen() {
                           <Field label="Provider (optional)" quiet>
                             <TextField
                               value={allocation.supplierName}
+                              maxLength={160}
                               onChangeText={(value) =>
                                 setApprovalLines((current) =>
                                   current.map((item, itemIndex) =>
@@ -1021,7 +1026,8 @@ function TextLink({
 
 const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12 },
-  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4, marginTop: 8 },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 20, rowGap: 16, marginTop: 10 },
+  clearHit: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" },
   filterLabel: { fontFamily: "Mukta_500Medium", fontSize: 15, color: colors.muted, marginRight: 8 },
   linkHit: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 8, marginRight: 12 },
   linkCount: { fontFamily: "Mukta_600SemiBold", fontSize: 15, color: colors.muted },
@@ -1033,7 +1039,7 @@ const styles = StyleSheet.create({
   },
   linkActive: { color: colors.accent },
   linkMuted: { color: colors.muted, fontFamily: "Mukta_500Medium" },
-  section: { marginTop: 20 },
+  section: { marginTop: 28 },
   sectionLabel: {
     fontFamily: "Mukta_600SemiBold",
     fontSize: 12,

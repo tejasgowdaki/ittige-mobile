@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Redirect, useRouter } from "expo-router";
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { HeroBackdrop } from "@/components/hero-backdrop";
 import { useAuth } from "@/lib/auth-context";
 import { colors } from "@/theme";
 
@@ -67,12 +68,13 @@ export default function Index() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.wash} pointerEvents="none" />
+      <HeroBackdrop />
       <View style={styles.inner}>
         <Text style={styles.eyebrow}>Field to office</Text>
-        <Text style={styles.brand}>
-          <Text style={styles.mark}>I</Text>ttige
-        </Text>
+        <View style={styles.brandRow}>
+          <Text style={[styles.brand, styles.mark]}>I</Text>
+          <Text style={styles.brand}>ttige</Text>
+        </View>
         <HeroLine />
         <Text style={styles.copy}>One app for godowns, project stock, progress by area, and schedule health.</Text>
         <View style={styles.actions}>
@@ -90,15 +92,6 @@ export default function Index() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg, justifyContent: "flex-end" },
-  wash: {
-    position: "absolute",
-    top: -180,
-    right: -140,
-    width: 460,
-    height: 460,
-    borderRadius: 230,
-    backgroundColor: "rgba(240, 201, 186, 0.55)",
-  },
   inner: { paddingHorizontal: 22, paddingBottom: 36 },
   eyebrow: {
     color: colors.muted,
@@ -109,14 +102,13 @@ const styles = StyleSheet.create({
     paddingRight: 6,
     fontFamily: "Mukta_500Medium",
   },
+  brandRow: { flexDirection: "row", alignItems: "flex-end", marginTop: 6 },
   brand: {
-    marginTop: 6,
     fontFamily: "Mukta_800ExtraBold",
     fontSize: 64,
-    lineHeight: 80,
+    lineHeight: 84,
     letterSpacing: -2,
     color: colors.ink,
-    paddingTop: 6,
   },
   mark: { color: colors.accent },
   line: { width: 88, height: 3, marginVertical: 18, backgroundColor: colors.accent },

@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { IconChevronDown, IconPencil, IconPlus, IconSave, IconTrash, IconUser } from "@/components/icons";
 import { Badge, Button, CheckBox, Copy, Empty, ErrorText, Field, Label, PhoneField, Row, Screen, SelectField, Sheet, SwitchRow, TextField, Title } from "@/components/ui";
 import { apiFetch } from "@/lib/api-client";
-import { useCompany } from "@/lib/company-context";
+import { useCompany, useCompanyGate } from "@/lib/company-context";
 import { queryKeys } from "@/lib/query-keys";
 import { useMembersQuery, useProjectsQuery, useRolesQuery, useSettingsQuery } from "@/lib/queries";
 import {
@@ -57,7 +58,9 @@ type Settings = { defaultAreaUnit: "SQ_FT" | "SQ_M"; scheduleLagThresholdPercent
 type Tab = "users" | "roles" | "settings";
 
 export default function TeamScreen() {
+  const router = useRouter();
   const { companyId, me } = useCompany();
+  const gate = useCompanyGate();
   const queryClient = useQueryClient();
   const isAdmin = me?.companies.find((company) => company.id === companyId)?.companyRole === "ADMIN";
   const myUserId = me?.id ?? null;
@@ -101,11 +104,24 @@ export default function TeamScreen() {
     : [{ value: "PROJECT_SUPERVISOR", label: formatRoleLabel("PROJECT_SUPERVISOR") }];
   const settings = settingsQuery.data;
 
+  if (gate.loading || (isAdmin && membersQuery.isPending && !membersQuery.data)) {
+    return <Screen><Empty>Loading…</Empty></Screen>;
+  }
+  if (gate.needsOnboarding) {
+    return (
+      <Screen>
+        <Title>Users</Title>
+        <Copy>Set up your company first.</Copy>
+        <Button label="Go home" onPress={() => router.replace("/")} />
+      </Screen>
+    );
+  }
   if (!isAdmin) {
     return (
       <Screen>
         <Title>Users</Title>
         <Copy>Only admins can manage users, roles, and company settings.</Copy>
+        <Button label="Go home" onPress={() => router.replace("/")} />
       </Screen>
     );
   }
@@ -134,13 +150,29 @@ export default function TeamScreen() {
     setError(null);
   }
 
+  function assignmentPayload() {
+    return Object.entries(assignments)
+      .filter(([, roleSlug]) => roleSlug)
+      .map(([projectId, roleSlug]) => ({ projectId, roleSlug }));
+  }
+
+  function accessError() {
+    const normalized = normalizePhone(phone);
+    if (!name.trim() && !normalized) return "Name and a valid mobile number are required";
+    if (!name.trim()) return "Name is required";
+    if (!normalized) return "Enter a valid 10-digit Indian mobile number";
+    if (!asAdmin && !allProjects && assignmentPayload().length === 0) return "Select at least one project";
+    return null;
+  }
+
   async function invite() {
     if (!companyId) return;
-    const normalized = normalizePhone(phone);
-    if (!normalized || !name.trim()) {
-      setError("Name and a valid mobile number are required");
+    const blocked = accessError();
+    if (blocked) {
+      setError(blocked);
       return;
     }
+    const normalized = normalizePhone(phone)!;
     setSaving(true);
     setError(null);
     try {
@@ -153,7 +185,7 @@ export default function TeamScreen() {
           isAdmin: asAdmin,
           allProjects: asAdmin ? false : allProjects,
           projectRole: asAdmin || !allProjects ? undefined : projectRole,
-          assignments: asAdmin || allProjects ? [] : Object.entries(assignments).filter(([, roleSlug]) => roleSlug).map(([projectId, roleSlug]) => ({ projectId, roleSlug })),
+          assignments: asAdmin || allProjects ? [] : assignmentPayload(),
         }),
       });
       setInviteOpen(false);
@@ -168,11 +200,12 @@ export default function TeamScreen() {
 
   async function saveAccess() {
     if (!companyId || !editing) return;
-    const normalized = normalizePhone(phone);
-    if (!normalized || !name.trim()) {
-      setError("Name and a valid mobile number are required");
+    const blocked = accessError();
+    if (blocked) {
+      setError(blocked);
       return;
     }
+    const normalized = normalizePhone(phone)!;
     setSaving(true);
     setError(null);
     try {
@@ -185,7 +218,7 @@ export default function TeamScreen() {
           isAdmin: asAdmin,
           allProjects: asAdmin ? false : allProjects,
           projectRole: asAdmin || !allProjects ? undefined : projectRole,
-          assignments: asAdmin || allProjects ? [] : Object.entries(assignments).filter(([, roleSlug]) => roleSlug).map(([projectId, roleSlug]) => ({ projectId, roleSlug })),
+          assignments: asAdmin || allProjects ? [] : assignmentPayload(),
         }),
       });
       setEditing(null);
@@ -638,9 +671,16 @@ export default function TeamScreen() {
       </Sheet>
 
       <Sheet open={Boolean(memberToDelete)} title="Remove user" onClose={() => setMemberToDelete(null)}>
-        <Copy>{memberToDelete ? `Remove ${memberToDelete.user.name} from this company?` : ""}</Copy>
+        <Text style={styles.confirmCopy}>
+          Remove <Text style={styles.confirmName}>{memberToDelete?.user.name ?? ""}</Text> from this company? They will lose access immediately.
+        </Text>
         <ErrorText>{error}</ErrorText>
-        <Button label="Remove" pending={saving} onPress={() => void confirmRemoveMember()} />
+        <Button
+          label="Remove user"
+          pending={saving}
+          icon={<IconTrash size={16} color={colors.accentInk} />}
+          onPress={() => void confirmRemoveMember()}
+        />
       </Sheet>
 
       <Sheet open={Boolean(inviteToRevoke)} title="Revoke invite" onClose={() => setInviteToRevoke(null)}>
@@ -650,7 +690,13 @@ export default function TeamScreen() {
             : ""}
         </Copy>
         <ErrorText>{error}</ErrorText>
-        <Button label="Revoke" pending={saving} onPress={() => void confirmRevokeInvite()} />
+        <Button
+          label="Revoke invite"
+          pending={saving}
+          pendingLabel="Revoking…"
+          icon={<IconTrash size={16} color={colors.accentInk} />}
+          onPress={() => void confirmRevokeInvite()}
+        />
       </Sheet>
 
       <Sheet
@@ -659,16 +705,21 @@ export default function TeamScreen() {
         onClose={() => setRoleOpen(false)}
       >
         {active?.locked ? (
-          <Copy>Admin permissions are fixed and cannot be changed.</Copy>
+          <>
+            <Copy>Admin permissions are fixed and cannot be changed.</Copy>
+            <Button label="Close" secondary onPress={() => setRoleOpen(false)} />
+          </>
         ) : (
-          <TextField
-            value={active?.name ?? ""}
-            onChangeText={(name) => {
-              if (!active) return;
-              setRoles(roleList.map((role) => (role.roleSlug === active.roleSlug ? { ...role, name } : role)));
-            }}
-            placeholder="Role name"
-          />
+          <Field label="Role name" quiet>
+            <TextField
+              value={active?.name ?? ""}
+              onChangeText={(name) => {
+                if (!active) return;
+                setRoles(roleList.map((role) => (role.roleSlug === active.roleSlug ? { ...role, name } : role)));
+              }}
+              placeholder="e.g. Site engineer"
+            />
+          </Field>
         )}
         {ROLE_PERMISSION_UI.map((group) => {
           const map = Object.fromEntries((active?.permissions ?? []).map((item) => [item.code, item.allowed]));
@@ -727,19 +778,43 @@ export default function TeamScreen() {
           );
         })}
         <ErrorText>{error}</ErrorText>
-        {active && !active.locked ? <Button label="Save role" pending={saving} onPress={() => void saveRole()} /> : null}
+        {active && !active.locked ? (
+          <Button
+            label="Save role"
+            pending={saving}
+            icon={<IconSave size={16} color={colors.accentInk} />}
+            onPress={() => void saveRole()}
+          />
+        ) : null}
       </Sheet>
 
       <Sheet open={createRoleOpen} title="New role" onClose={() => { setCreateRoleOpen(false); setNewRole(""); setError(null); }}>
-        <TextField value={newRole} onChangeText={setNewRole} placeholder="Role name" />
+        <Field label="Role name" quiet>
+          <TextField value={newRole} onChangeText={setNewRole} placeholder="e.g. Site engineer" />
+        </Field>
         <ErrorText>{error}</ErrorText>
-        <Button label="Create role" pending={saving} onPress={() => void createRole()} />
+        <Button
+          label="Create role"
+          pending={saving}
+          pendingLabel="Creating…"
+          icon={<IconPlus size={16} color={colors.accentInk} />}
+          onPress={() => void createRole()}
+        />
       </Sheet>
 
       <Sheet open={Boolean(roleToDelete)} title="Delete role" onClose={() => setRoleToDelete(null)}>
-        <Copy>{roleToDelete ? `Delete ${roleToDelete.name}?` : ""}</Copy>
+        <Copy>
+          {roleToDelete
+            ? `Delete ${roleToDelete.name}? This cannot be undone. Roles that are still in use cannot be deleted.`
+            : ""}
+        </Copy>
         <ErrorText>{error}</ErrorText>
-        <Button label="Delete role" pending={saving} onPress={() => void confirmDeleteRole()} />
+        <Button
+          label="Delete role"
+          pending={saving}
+          icon={<IconTrash size={16} color={colors.accentInk} />}
+          onPress={() => void confirmDeleteRole()}
+        />
       </Sheet>
 
       <Sheet open={settingsOpen} title="Company settings" onClose={() => { setSettingsOpen(false); setError(null); }}>
@@ -748,15 +823,18 @@ export default function TeamScreen() {
           value={areaUnit}
           onChange={(value) => setAreaUnit(value as "SQ_FT" | "SQ_M")}
           options={[
-            { value: "SQ_FT", label: "Square foot" },
-            { value: "SQ_M", label: "Square meter" },
+            { value: "SQ_FT", label: "Square foot (sqft)" },
+            { value: "SQ_M", label: "Square meter (sqm)" },
           ]}
         />
-        <TextField value={lag} onChangeText={setLag} keyboardType="number-pad" placeholder="Schedule lag %" />
+        <Field label="Schedule lag threshold %" quiet>
+          <TextField value={lag} onChangeText={setLag} keyboardType="number-pad" />
+        </Field>
         <ErrorText>{error}</ErrorText>
         <Button
           label="Save settings"
           pending={saving}
+          icon={<IconSave size={16} color={colors.accentInk} />}
           onPress={() => {
             if (!companyId) return;
             setSaving(true);
@@ -809,7 +887,15 @@ const styles = StyleSheet.create({
   personName: { fontFamily: "Mukta_600SemiBold", fontSize: 16, color: colors.ink },
   personMeta: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 4 },
   actions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  link: { fontFamily: "Mukta_600SemiBold", fontSize: 15, color: colors.accent },
+  link: {
+    fontFamily: "Mukta_600SemiBold",
+    fontSize: 15,
+    color: colors.ink,
+    textDecorationLine: "underline",
+    textDecorationColor: "rgba(58,34,24,0.35)",
+  },
+  confirmCopy: { fontFamily: "Mukta_400Regular", fontSize: 16, lineHeight: 24, color: colors.muted },
+  confirmName: { fontFamily: "Mukta_700Bold", color: colors.ink },
   iconBtn: {
     width: 36,
     height: 36,
@@ -819,7 +905,7 @@ const styles = StyleSheet.create({
   },
   iconAccent: { backgroundColor: colors.accent },
   iconGhost: { backgroundColor: "transparent" },
-  accordion: { marginTop: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 12, overflow: "hidden" },
+  accordion: { marginTop: 12, borderWidth: 1, borderColor: colors.line, borderRadius: 14, overflow: "hidden" },
   accordionHead: { flexDirection: "row", alignItems: "center", gap: 10, paddingLeft: 12 },
   accordionToggle: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingRight: 12 },
   chevronOpen: { transform: [{ rotate: "180deg" }] },

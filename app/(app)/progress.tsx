@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Image } from "expo-image";
 import { IconCheck, IconClose, IconPlus, IconTrash } from "@/components/icons";
 import { PhotoPicker, type PickedPhoto } from "@/components/photo-picker";
-import { Badge, Button, Copy, Empty, ErrorText, Field, IconButton, Label, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
-import { apiFetch, uploadMedia } from "@/lib/api-client";
+import { Badge, Button, Copy, Empty, ErrorText, Field, FieldError, IconButton, Label, Row, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
+import { apiBaseUrl, apiFetch, uploadMedia } from "@/lib/api-client";
+import { getSessionToken } from "@/lib/session-store";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
 import { DateCalendar, DateField } from "@/components/date-field";
 import { formatDisplayDate, toDateKey } from "@/lib/dates";
@@ -32,11 +34,13 @@ type Entry = {
   project: { id: string; name: string };
   submittedBy: { id: string; name: string } | null;
   lines: {
+    id?: string;
     completionPercent: string | number;
     space: { id: string; name: string; floor?: number };
     workType: { id: string; name: string };
   }[];
 };
+type StockLine = { materialId: string; quantity: string };
 type Balance = {
   quantity: string | number;
   material: { id: string; name: string; uom: string };
@@ -144,9 +148,10 @@ export default function ProgressScreen() {
   const [percent, setPercent] = useState("");
   const [note, setNote] = useState("");
   const [stockReason, setStockReason] = useState("USED");
-  const [materialId, setMaterialId] = useState("");
-  const [quantity, setQuantity] = useState("");
+  const [stockLines, setStockLines] = useState<StockLine[]>([{ materialId: "", quantity: "" }]);
   const [photos, setPhotos] = useState<PickedPhoto[]>([]);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [dayFocus, setDayFocus] = useState<string | null>(null);
   const [view, setView] = useState<Entry | null>(null);
   const [entryToDelete, setEntryToDelete] = useState<Entry | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -198,9 +203,9 @@ export default function ProgressScreen() {
     setPercent("");
     setNote("");
     setStockReason("USED");
-    setMaterialId("");
-    setQuantity("");
+    setStockLines([{ materialId: "", quantity: "" }]);
     setPhotos([]);
+    setFieldErrors({});
     setError(null);
   }
 
@@ -223,18 +228,70 @@ export default function ProgressScreen() {
     return created.id;
   }
 
-  async function submit() {
-    if (!companyId || !projectId) {
-      setError("Select a project");
-      return;
+  function validate() {
+    const next: Record<string, string> = {};
+    if (!projectId) next.projectId = "Select a project";
+    if (!entryDate) next.entryDate = "Select a date";
+    if (kind === "LABOR") {
+      if (laborMode === "new" || laborTypes.length === 0) {
+        if (!newLabor.trim()) next.laborType = "Enter a labor type";
+      } else if (!laborTypeId) next.laborType = "Select a labor type";
+      const count = Number(laborCount);
+      if (!laborCount.trim() || Number.isNaN(count) || count < 0) next.laborCount = "Enter a valid count";
     }
+    if (kind === "PROGRESS") {
+      if (!spaceId) next.spaceId = "Select a space";
+      if (workMode === "new" || workTypes.length === 0) {
+        if (!newWork.trim()) next.workType = "Enter a work type";
+      } else if (!workTypeId) next.workType = "Select a work type";
+      const value = Number(percent);
+      if (!percent.trim() || Number.isNaN(value)) next.percent = "Enter a percentage";
+      else if (value < 0 || value > 100) next.percent = "Must be between 0 and 100";
+    }
+    if (kind === "NOTE" && !note.trim()) next.note = "Enter a note";
+    if (kind === "STOCK") {
+      const locationId = projectQuery.data?.stockLocation?.id;
+      if (!locationId) next.projectId = "This project has no stock location";
+      if (projectBalances.length === 0) {
+        next.stock = "No stock on this project";
+        return next;
+      }
+      const seen = new Set<string>();
+      stockLines.forEach((line, index) => {
+        if (!line.materialId) {
+          next[`stock-${index}`] = "Select a material";
+          return;
+        }
+        if (seen.has(line.materialId)) {
+          next[`stock-${index}`] = "Material already added";
+          return;
+        }
+        seen.add(line.materialId);
+        const balance = projectBalances.find((item) => item.material.id === line.materialId);
+        const qty = Number(line.quantity);
+        if (!line.quantity.trim() || !Number.isFinite(qty) || qty <= 0) {
+          next[`stock-${index}`] = "Enter a quantity";
+          return;
+        }
+        const available = balance ? Number(balance.quantity) : 0;
+        if (qty > available) next[`stock-${index}`] = `Only ${available} ${balance?.material.uom ?? ""} available`;
+      });
+    }
+    return next;
+  }
+
+  async function submit() {
+    if (!companyId) return;
+    const nextErrors = validate();
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
     setSaving(true);
     setError(null);
     try {
       if (kind === "STOCK") {
         const locationId = projectQuery.data?.stockLocation?.id;
-        if (!locationId || !materialId || Number(quantity) <= 0) throw new Error("Material and quantity are required");
-        const lines = [{ materialId, quantity: Number(quantity) }];
+        if (!locationId) throw new Error("This project has no stock location");
+        const lines = stockLines.map((line) => ({ materialId: line.materialId, quantity: Number(line.quantity) }));
         if (stockReason === "USED") {
           const usage = await apiFetch<{ id: string }>("/api/v1/usages", {
             method: "POST",
@@ -303,7 +360,29 @@ export default function ProgressScreen() {
     }
   }
 
-  if (gate.loading) return <Screen><Empty>Loading…</Empty></Screen>;
+  const focusedEntries = dayFocus ? entries.filter((entry) => dateKey(entry.entryDate) === dayFocus) : [];
+  const dayLaborTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const entry of focusedEntries) {
+      if (entry.kind !== "LABOR") continue;
+      const name = entry.laborType?.name ?? "Labor";
+      totals.set(name, (totals.get(name) ?? 0) + (entry.laborCount ?? 0));
+    }
+    return [...totals.entries()];
+  }, [focusedEntries]);
+  const mediaQuery = useQuery({
+    queryKey: ["media", companyId ?? "", "SITE_LOG", view?.id ?? ""],
+    queryFn: () =>
+      apiFetch<{ media: { id: string; url: string; caption?: string | null }[] }>(
+        `/api/v1/media/file?ownerType=SITE_LOG&ownerId=${view!.id}`,
+        { companyId },
+      ).then((payload) => payload.media),
+    enabled: Boolean(companyId) && Boolean(view?.id) && (view?.kind === "PROGRESS" || view?.kind === "NOTE"),
+  });
+
+  if (gate.loading || (ready && projectsQuery.isPending && !projectsQuery.data)) {
+    return <Screen><Empty>Loading…</Empty></Screen>;
+  }
 
   return (
     <Screen>
@@ -359,15 +438,20 @@ export default function ProgressScreen() {
         </View>
       </View>
 
-      <View style={styles.section}>
+      <View style={styles.history}>
         <Label>History</Label>
         {logQuery.isPending && !logQuery.data ? <Empty>Loading…</Empty> : null}
-        {!logQuery.isPending && entries.length === 0 ? <Empty>No entries yet. Add labor, progress, or a note.</Empty> : null}
+        {logQuery.error ? (
+          <ErrorText>{logQuery.error instanceof Error ? logQuery.error.message : "Could not load history"}</ErrorText>
+        ) : null}
+        {!logQuery.isPending && !logQuery.error && entries.length === 0 ? <Empty>No entries yet. Add labor, progress, or a note.</Empty> : null}
         {grouped.map(([day, dayEntries]) => (
           <View key={day}>
-            <Text style={styles.day}>
-              {`${formatDisplayDate(day)} · ${dayEntries.length} entr${dayEntries.length === 1 ? "y" : "ies"}`}
-            </Text>
+            <Pressable onPress={() => setDayFocus(day)}>
+              <Text style={styles.day}>
+                {`${day} · ${dayEntries.length} entr${dayEntries.length === 1 ? "y" : "ies"}`}
+              </Text>
+            </Pressable>
             {dayEntries.map((entry) => (
               <Pressable key={entry.id} style={styles.entry} onPress={() => setView(entry)}>
                 <View style={{ flex: 1 }}>
@@ -376,7 +460,7 @@ export default function ProgressScreen() {
                     {`${filterProjectId ? "" : `${kindLabel(entry.kind)} · `}${entrySummary(entry)}`}
                   </Text>
                 </View>
-                <Badge>{kindLabel(entry.kind).toUpperCase()}</Badge>
+                <Badge>{kindLabel(entry.kind)}</Badge>
                 {entry.submittedBy?.id === me?.id ? (
                   <Pressable
                     accessibilityLabel="Delete entry"
@@ -405,6 +489,7 @@ export default function ProgressScreen() {
         />
       </Sheet>
       <Sheet open={projectOpen} title="Select project" onClose={() => setProjectOpen(false)}>
+        {projects.length === 0 ? <Empty>No projects yet.</Empty> : null}
         {projects.map((project) => (
           <Pressable
             key={project.id}
@@ -412,9 +497,11 @@ export default function ProgressScreen() {
             onPress={() => {
               setFilterProjectId(project.id);
               setProjectOpen(false);
+              setDayFocus(null);
             }}
           >
-            <Text style={[styles.entryTitle, project.id === filterProjectId && styles.active]}>{project.name}</Text>
+            <Text style={[styles.entryTitle, { flex: 1 }, project.id === filterProjectId && styles.active]}>{project.name}</Text>
+            {project.id === filterProjectId ? <IconCheck size={16} color={colors.accent} /> : null}
           </Pressable>
         ))}
       </Sheet>
@@ -430,7 +517,9 @@ export default function ProgressScreen() {
           }}
           options={projects.map((project) => ({ value: project.id, label: project.name }))}
         />
+        <FieldError>{fieldErrors.projectId}</FieldError>
         <DateField label="Date" value={entryDate} onChange={setEntryDate} />
+        <FieldError>{fieldErrors.entryDate}</FieldError>
         <SelectField
           label="What are you recording?"
           quiet
@@ -458,10 +547,13 @@ export default function ProgressScreen() {
             {laborMode === "new" || laborTypes.length === 0 ? (
               <Field label={laborTypes.length === 0 ? "Labor type name" : "New labor type name"} quiet>
                 <TextField value={newLabor} onChangeText={setNewLabor} placeholder="e.g. Mason, Helper" />
+                <FieldError>{fieldErrors.laborType}</FieldError>
               </Field>
             ) : null}
+            <FieldError>{laborMode === "existing" && laborTypes.length > 0 ? fieldErrors.laborType : null}</FieldError>
             <Field label="Count" quiet>
               <TextField value={laborCount} onChangeText={setLaborCount} keyboardType="number-pad" />
+              <FieldError>{fieldErrors.laborCount}</FieldError>
             </Field>
             <Field label="Note (optional)" quiet>
               <TextField value={note} onChangeText={setNote} multiline />
@@ -469,7 +561,9 @@ export default function ProgressScreen() {
           </>
         ) : null}
         {kind === "PROGRESS" ? (
-          spaces.length === 0 ? (
+          projectQuery.isPending ? (
+            <Empty>Loading spaces…</Empty>
+          ) : spaces.length === 0 ? (
             <Empty>Add spaces on the project before logging progress.</Empty>
           ) : (
             <>
@@ -480,6 +574,7 @@ export default function ProgressScreen() {
                 onChange={setSpaceId}
                 options={spaces.map((space) => ({ value: space.id, label: `${formatFloorLabel(Number(space.floor))} · ${space.name}` }))}
               />
+              <FieldError>{fieldErrors.spaceId}</FieldError>
               <SelectField
                 label="Work type"
                 quiet
@@ -497,11 +592,14 @@ export default function ProgressScreen() {
               />
               {workMode === "new" || workTypes.length === 0 ? (
                 <Field label={workTypes.length === 0 ? "Work type name" : "New work type name"} quiet>
-                  <TextField value={newWork} onChangeText={setNewWork} placeholder="e.g. Bathroom wall work" />
-                </Field>
-              ) : null}
+                <TextField value={newWork} onChangeText={setNewWork} placeholder="e.g. Bathroom wall work" />
+                <FieldError>{fieldErrors.workType}</FieldError>
+              </Field>
+            ) : null}
+              <FieldError>{workMode === "existing" && workTypes.length > 0 ? fieldErrors.workType : null}</FieldError>
               <Field label="Completion %" quiet>
                 <TextField value={percent} onChangeText={setPercent} keyboardType="decimal-pad" />
+                <FieldError>{fieldErrors.percent}</FieldError>
                 {currentCompletion !== null ? (
                   <Text style={styles.currentNote}>Currently {formatPercent(currentCompletion)} done</Text>
                 ) : null}
@@ -512,28 +610,57 @@ export default function ProgressScreen() {
         {kind === "NOTE" ? (
           <Field label="Note" quiet>
             <TextField value={note} onChangeText={setNote} multiline />
+            <FieldError>{fieldErrors.note}</FieldError>
           </Field>
         ) : null}
         {kind === "STOCK" ? (
           <>
             <SelectField label="What happened?" quiet value={stockReason} onChange={setStockReason} options={STOCK_REASONS} />
-            {projectBalances.length === 0 ? (
-              <Empty>No stock on this project.</Empty>
-            ) : (
-              <SelectField
-                label="Material"
-                quiet
-                value={materialId}
-                onChange={setMaterialId}
-                options={projectBalances.map((balance) => ({
-                  value: balance.material.id,
-                  label: `${balance.material.name} (${balance.quantity} ${balance.material.uom})`,
-                }))}
-              />
-            )}
-            <Field label="Quantity" quiet>
-              <TextField value={quantity} onChangeText={setQuantity} keyboardType="decimal-pad" />
-            </Field>
+            {stockQuery.isPending ? <Empty>Loading stock…</Empty> : null}
+            {!stockQuery.isPending && projectBalances.length === 0 ? <Empty>No stock on this project.</Empty> : null}
+            <FieldError>{fieldErrors.stock}</FieldError>
+            {projectBalances.length > 0
+              ? stockLines.map((line, index) => {
+                  const balance = projectBalances.find((item) => item.material.id === line.materialId);
+                  return (
+                    <View key={index}>
+                      <View style={styles.lineHead}>
+                        <Text style={styles.filterLabel}>{stockLines.length > 1 ? `Material ${index + 1}` : "Material"}</Text>
+                        {stockLines.length > 1 ? (
+                          <Pressable
+                            onPress={() => setStockLines((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                          >
+                            <Text style={styles.link}>Remove</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                      <SelectField
+                        quiet
+                        value={line.materialId}
+                        onChange={(next) =>
+                          setStockLines((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, materialId: next } : item)))
+                        }
+                        options={projectBalances.map((item) => ({ value: item.material.id, label: item.material.name }))}
+                      />
+                      <Field label={balance ? `Qty · ${Number(balance.quantity)} ${balance.material.uom}` : "Qty"} quiet>
+                        <TextField
+                          value={line.quantity}
+                          onChangeText={(next) =>
+                            setStockLines((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, quantity: next } : item)))
+                          }
+                          keyboardType="decimal-pad"
+                        />
+                      </Field>
+                      <FieldError>{fieldErrors[`stock-${index}`]}</FieldError>
+                    </View>
+                  );
+                })
+              : null}
+            {projectBalances.length > 0 ? (
+              <Pressable onPress={() => setStockLines((current) => [...current, { materialId: "", quantity: "" }])}>
+                <Text style={styles.link}>Add material</Text>
+              </Pressable>
+            ) : null}
             <Field label="Note (optional)" quiet>
               <TextField value={note} onChangeText={setNote} multiline />
             </Field>
@@ -551,13 +678,94 @@ export default function ProgressScreen() {
         />
       </Sheet>
 
-      <Sheet open={Boolean(view)} title="Entry" onClose={() => setView(null)}>
+      <Sheet open={Boolean(dayFocus)} title={dayFocus ? `Day · ${dayFocus}` : "Day"} onClose={() => setDayFocus(null)}>
+        {dayLaborTotals.length > 0 ? (
+          <>
+            <Label>Labor totals</Label>
+            {dayLaborTotals.map(([name, total]) => (
+              <Row key={name} title={name} subtitle={`${total} people`} />
+            ))}
+          </>
+        ) : null}
+        <Label>Entries</Label>
+        {focusedEntries.map((entry) => (
+          <Pressable
+            key={entry.id}
+            onPress={() => {
+              setDayFocus(null);
+              setView(entry);
+            }}
+          >
+            <Row
+              title={`${kindLabel(entry.kind)}${filterProjectId ? "" : ` · ${entry.project.name}`}`}
+              subtitle={entrySummary(entry)}
+            />
+          </Pressable>
+        ))}
+      </Sheet>
+
+      <Sheet open={Boolean(view)} title="Log entry" onClose={() => setView(null)}>
         {view ? (
           <>
-            <Text style={styles.entryTitle}>{view.project.name}</Text>
-            <Copy>{`${kindLabel(view.kind)} · ${formatDisplayDate(dateKey(view.entryDate))}`}</Copy>
-            <Copy>{entrySummary(view)}</Copy>
-            {view.note ? <Copy>{view.note}</Copy> : null}
+            <Label>{view.project.name}</Label>
+            <Text style={styles.entryTitle}>{kindLabel(view.kind)}</Text>
+            <Copy>{dateKey(view.entryDate)}</Copy>
+            {view.kind === "LABOR" ? (
+              <>
+                <Label>Labor</Label>
+                <Copy>{`${view.laborType?.name ?? "Labor"} · ${view.laborCount ?? 0}`}</Copy>
+                {view.note ? <Copy>{view.note}</Copy> : null}
+              </>
+            ) : null}
+            {view.kind === "NOTE" ? (
+              <>
+                <Label>Note</Label>
+                <Copy>{view.note ?? ""}</Copy>
+              </>
+            ) : null}
+            {view.kind === "PROGRESS" ? (
+              <>
+                <Label>Progress</Label>
+                {view.lines.map((line, index) => (
+                  <Row
+                    key={line.id ?? `${line.space.id}-${index}`}
+                    title={line.space.name}
+                    subtitle={`${formatFloorLabel(Number(line.space.floor ?? 0))} · ${line.workType.name} · ${formatPercent(line.completionPercent)}`}
+                  />
+                ))}
+              </>
+            ) : null}
+            {view.kind === "PROGRESS" || view.kind === "NOTE" ? (
+              <>
+                <Label>Photos</Label>
+                {mediaQuery.isPending ? <Empty>Loading photos…</Empty> : null}
+                {!mediaQuery.isPending && (mediaQuery.data?.length ?? 0) === 0 ? <Empty>No photos attached.</Empty> : null}
+                <View style={styles.photoGrid}>
+                  {(mediaQuery.data ?? []).map((item) => (
+                    <Image
+                      key={item.id}
+                      source={{
+                        uri: item.url.startsWith("http") ? item.url : `${apiBaseUrl()}${item.url}`,
+                        headers: getSessionToken() ? { Authorization: `Bearer ${getSessionToken()}` } : undefined,
+                      }}
+                      style={styles.photo}
+                      contentFit="cover"
+                    />
+                  ))}
+                </View>
+              </>
+            ) : null}
+            {view.submittedBy?.id === me?.id ? (
+              <Button
+                label="Delete entry"
+                secondary
+                icon={<IconTrash size={16} color={colors.ink} />}
+                onPress={() => {
+                  setError(null);
+                  setEntryToDelete(view);
+                }}
+              />
+            ) : null}
           </>
         ) : null}
       </Sheet>
@@ -573,7 +781,7 @@ export default function ProgressScreen() {
       >
         <Copy>
           {entryToDelete
-            ? `Delete this ${kindLabel(entryToDelete.kind).toLowerCase()} entry for ${entryToDelete.project.name} on ${formatDisplayDate(dateKey(entryToDelete.entryDate))}? This cannot be undone.`
+            ? `Delete this ${kindLabel(entryToDelete.kind).toLowerCase()} entry for ${entryToDelete.project.name} on ${dateKey(entryToDelete.entryDate)}? This cannot be undone.`
             : ""}
         </Copy>
         <ErrorText>{error}</ErrorText>
@@ -624,8 +832,12 @@ function TextLink({
 
 const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 12 },
-  section: { marginTop: 28 },
-  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 },
+  section: { marginTop: 18 },
+  history: { marginTop: 22 },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 20, rowGap: 8 },
+  lineHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  photo: { width: 88, height: 88, borderRadius: 10 },
   filterLabel: { fontFamily: "Mukta_500Medium", fontSize: 15, color: colors.muted, marginRight: 8 },
   linkHit: { paddingVertical: 8, marginRight: 12 },
   link: {
@@ -654,7 +866,7 @@ const styles = StyleSheet.create({
   entryTitle: { fontFamily: "Mukta_600SemiBold", fontSize: 16, color: colors.ink },
   entryMeta: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 4 },
   iconGhost: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
-  option: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.line },
+  option: { flexDirection: "row", alignItems: "center", paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.line },
   active: { color: colors.accent },
   confirmRow: { flexDirection: "row", gap: 8 },
   currentNote: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 6 },

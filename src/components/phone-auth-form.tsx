@@ -28,7 +28,8 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
   const { establishSession } = useAuth();
   const verificationId = useRef<string | null>(null);
-  const [devAuth, setDevAuth] = useState<{ enabled: boolean; otp: string | null } | null>(null);
+  const [devAuth, setDevAuth] = useState<{ enabled: boolean; otp: string | null }>({ enabled: false, otp: null });
+  const devAuthRequest = useRef<Promise<{ enabled: boolean; otp: string | null }> | null>(null);
   const [localNumber, setLocalNumber] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"phone" | "code">("phone");
@@ -37,10 +38,33 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
   const [saving, setSaving] = useState(false);
   const [challengeHtml, setChallengeHtml] = useState<string | null>(null);
 
+  function loadDevAuth() {
+    if (!devAuthRequest.current) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const request = apiFetch<{ enabled?: boolean; otp?: string | null }>("/api/v1/dev-auth", {
+        signal: controller.signal,
+      })
+        .then((payload) => ({ enabled: Boolean(payload.enabled), otp: payload.otp ?? null }))
+        .finally(() => clearTimeout(timer));
+      devAuthRequest.current = request;
+      request.catch(() => {
+        if (devAuthRequest.current === request) devAuthRequest.current = null;
+      });
+    }
+    return devAuthRequest.current;
+  }
+
   useEffect(() => {
-    void apiFetch<{ enabled?: boolean; otp?: string | null }>("/api/v1/dev-auth")
-      .then((payload) => setDevAuth({ enabled: Boolean(payload.enabled), otp: payload.otp ?? null }))
-      .catch(() => setDevAuth({ enabled: false, otp: null }));
+    let active = true;
+    void loadDevAuth()
+      .then((payload) => {
+        if (active) setDevAuth(payload);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, []);
 
   function recaptchaHtml(phone: string) {
@@ -76,13 +100,18 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
   async function sendCode() {
     setError(null);
     setSaving(true);
+    let keepSaving = false;
     try {
       const phone = normalizePhone(localNumber);
       if (!phone) throw new Error("Enter a valid 10-digit Indian mobile number");
-      if (devAuth?.enabled) {
+      const authMode = await loadDevAuth().catch(() => {
+        throw new Error("Could not reach the server. Check that the API is running.");
+      });
+      setDevAuth(authMode);
+      if (authMode.enabled) {
         setPendingPhone(phone);
         setStep("code");
-        if (devAuth.otp) setCode(devAuth.otp);
+        if (authMode.otp) setCode(authMode.otp);
         return;
       }
       if (!isFirebaseClientConfigured()) {
@@ -90,11 +119,11 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
       }
       setPendingPhone(phone);
       setChallengeHtml(recaptchaHtml(phone));
+      keepSaving = true;
     } catch (err) {
       setError(authErrorMessage(err, "Could not send OTP"));
-      setSaving(false);
     } finally {
-      if (devAuth?.enabled) setSaving(false);
+      if (!keepSaving) setSaving(false);
     }
   }
 
@@ -125,8 +154,6 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
       setSaving(false);
     }
   }
-
-  if (!devAuth) return <Copy>Loading…</Copy>;
 
   if (challengeHtml) {
     return (
@@ -186,11 +213,12 @@ export function PhoneAuthForm({ mode }: { mode: Mode }) {
         icon={<IconSend size={16} color={colors.accentInk} />}
         onPress={() => void sendCode()}
       />
-      <Pressable onPress={() => router.replace(mode === "sign-in" ? "/sign-up" : "/sign-in")}>
-        <Text style={styles.switchLink}>
-          {mode === "sign-in" ? "New here? Create account" : "Already have an account? Sign in"}
+      <Text style={styles.switchLink}>
+        {mode === "sign-in" ? "New here? " : "Already have an account? "}
+        <Text style={styles.switchAction} onPress={() => router.replace(mode === "sign-in" ? "/sign-up" : "/sign-in")}>
+          {mode === "sign-in" ? "Create account" : "Sign in"}
         </Text>
-      </Pressable>
+      </Text>
     </View>
   );
 }
@@ -210,10 +238,15 @@ const styles = StyleSheet.create({
   sentStrong: { fontFamily: "Mukta_700Bold", color: colors.ink },
   switchLink: {
     textAlign: "center",
-    marginTop: 4,
+    marginTop: 14,
     color: colors.muted,
     fontFamily: "Mukta_400Regular",
     fontSize: 16,
+  },
+  switchAction: {
+    color: colors.ink,
+    fontFamily: "Mukta_700Bold",
+    textDecorationLine: "underline",
   },
   web: { height: 420 },
 });

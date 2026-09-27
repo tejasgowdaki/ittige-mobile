@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { IconPencil, IconPlus, IconSave, IconTrash } from "@/components/icons";
-import { Button, Copy, Empty, ErrorText, Field, FilterLink, Label, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
+import { Button, Copy, Empty, ErrorText, Field, FieldError, FilterLink, Label, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
 import { apiFetch } from "@/lib/api-client";
 import { useCompany } from "@/lib/company-context";
 import { queryKeys } from "@/lib/query-keys";
@@ -61,6 +61,7 @@ export default function ProjectDetailScreen() {
   const [floorFilter, setFloorFilter] = useState<number[]>([]);
   const [spaceToDelete, setSpaceToDelete] = useState<Space | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -82,6 +83,7 @@ export default function ProjectDetailScreen() {
     setAddress("");
     setStatus("ACTIVE");
     setError(null);
+    setFieldErrors({});
   }
 
   function closeSpace() {
@@ -94,12 +96,19 @@ export default function ProjectDetailScreen() {
     setNewFloor("");
     setArea("100");
     setError(null);
+    setFieldErrors({});
   }
 
   async function saveProject() {
-    if (!companyId || !projectId || !name.trim()) return;
-    setSaving(true);
+    if (!companyId || !projectId) return;
+    const next: Record<string, string> = {};
+    if (!name.trim()) next.name = "Project name is required";
+    else if (name.trim().length > 160) next.name = "Project name is too long";
+    if (address.trim().length > 200) next.addressLine = "Address is too long";
+    setFieldErrors(next);
     setError(null);
+    if (Object.keys(next).length > 0) return;
+    setSaving(true);
     try {
       await apiFetch(`/api/v1/projects/${projectId}`, {
         method: "PATCH",
@@ -131,7 +140,7 @@ export default function ProjectDetailScreen() {
       setNewFloor(String(Number(space.floor)));
     } else if (existing.length > 0) {
       setFloorMode("existing");
-      setFloor(String(existing[0]));
+      setFloor(String(existing[existing.length - 1]));
       setNewFloor("");
     } else {
       setFloorMode("new");
@@ -144,19 +153,24 @@ export default function ProjectDetailScreen() {
 
   async function saveSpace() {
     if (!companyId || !projectId || !project) return;
-    if (!spaceName.trim() || Number(area) <= 0) {
-      setError("Name and area are required");
-      return;
-    }
     const existing = uniqueFloors(project.spaces);
     const usingNewFloor = existing.length === 0 || floorMode === "new";
     const floorNumber = usingNewFloor ? Number(newFloor) : Number(floor);
-    if (usingNewFloor && (newFloor.trim() === "" || Number.isNaN(floorNumber))) {
-      setError("Enter a floor number");
-      return;
+    const next: Record<string, string> = {};
+    if (!spaceName.trim()) next.name = "Space name is required";
+    else if (spaceName.trim().length > 120) next.name = "Space name is too long";
+    if (usingNewFloor && (newFloor.trim() === "" || !/^-?\d+$/.test(newFloor.trim()))) {
+      next.floor = "Floor must be a whole number (0 = ground)";
+    } else if (!usingNewFloor && Number.isNaN(floorNumber)) {
+      next.floor = "Select a floor";
     }
-    setSaving(true);
+    const areaValue = Number(area);
+    if (!area.trim() || Number.isNaN(areaValue)) next.area = "Area is required";
+    else if (areaValue <= 0) next.area = "Area must be greater than 0";
+    setFieldErrors(next);
     setError(null);
+    if (Object.keys(next).length > 0) return;
+    setSaving(true);
     try {
       const body = { name: spaceName.trim(), spaceType, floor: floorNumber, area: Number(area) };
       if (editingSpaceId) {
@@ -197,6 +211,13 @@ export default function ProjectDetailScreen() {
   }
 
   if (projectQuery.isPending) return <Screen><Empty>Loading…</Empty></Screen>;
+  if (projectQuery.error) {
+    return (
+      <Screen>
+        <ErrorText>{projectQuery.error instanceof Error ? projectQuery.error.message : "Could not load project"}</ErrorText>
+      </Screen>
+    );
+  }
   if (!project) return <Screen><Empty>Project not found.</Empty></Screen>;
 
   const unit = areaUnitSymbol(project.areaUnit);
@@ -236,9 +257,9 @@ export default function ProjectDetailScreen() {
       </Copy>
 
       <View style={styles.sectionHead}>
-        <Label>{`Spaces · ${shownArea.toFixed(0)} ${unit} total`}</Label>
+        <Label>{`Spaces · ${(activeFloors.length === 0 ? Number(project.totalArea) : shownArea).toFixed(0)} ${unit} total`}</Label>
         <Pressable accessibilityLabel="Add space" style={styles.iconAccent} onPress={() => openSpace()}>
-          <IconPlus size={16} color={colors.accentInk} />
+          <IconPlus size={18} color={colors.accentInk} />
         </Pressable>
       </View>
       {floors.length > 1 ? (
@@ -259,7 +280,7 @@ export default function ProjectDetailScreen() {
             />
           ))}
           {activeFloors.length > 0 ? (
-            <FilterLink label="Clear" onPress={() => setFloorFilter([])} />
+            <FilterLink label="Clear" muted onPress={() => setFloorFilter([])} />
           ) : null}
         </View>
       ) : null}
@@ -296,10 +317,12 @@ export default function ProjectDetailScreen() {
         onClose={closeProject}
       >
         <Field label="Project name" quiet>
-          <TextField value={name} onChangeText={setName} />
+          <TextField value={name} onChangeText={setName} maxLength={160} />
+          <FieldError>{fieldErrors.name}</FieldError>
         </Field>
         <Field label="Address (optional)" quiet>
-          <TextField value={address} onChangeText={setAddress} multiline placeholder="Street, area, city" />
+          <TextField value={address} onChangeText={setAddress} multiline maxLength={200} placeholder="Street, area, city" />
+          <FieldError>{fieldErrors.addressLine}</FieldError>
         </Field>
         <SelectField
           label="Status"
@@ -320,7 +343,8 @@ export default function ProjectDetailScreen() {
 
       <Sheet open={spaceOpen} title={editingSpaceId ? "Edit space" : "Add space"} onClose={closeSpace}>
         <Field label="Name" quiet>
-          <TextField value={spaceName} onChangeText={setSpaceName} />
+          <TextField value={spaceName} onChangeText={setSpaceName} maxLength={120} />
+          <FieldError>{fieldErrors.name}</FieldError>
         </Field>
         {floors.length > 0 ? (
           <SelectField
@@ -351,6 +375,7 @@ export default function ProjectDetailScreen() {
               placeholder="0 = ground"
             />
             {floors.length === 0 ? <Text style={styles.hint}>0 = ground, negative = basement</Text> : null}
+            <FieldError>{fieldErrors.floor}</FieldError>
           </Field>
         ) : null}
         <SelectField
@@ -362,6 +387,7 @@ export default function ProjectDetailScreen() {
         />
         <Field label={`Area (${unit})`} quiet>
           <TextField value={area} onChangeText={setArea} keyboardType="decimal-pad" />
+          <FieldError>{fieldErrors.area}</FieldError>
         </Field>
         <ErrorText>{error}</ErrorText>
         <Button
@@ -388,7 +414,9 @@ export default function ProjectDetailScreen() {
           setError(null);
         }}
       >
-        <Copy>{`Delete ${spaceToDelete?.name ?? ""}? This cannot be undone.`}</Copy>
+        <Text style={styles.deleteCopy}>
+          Delete <Text style={styles.deleteName}>{spaceToDelete?.name ?? ""}</Text>? This cannot be undone.
+        </Text>
         <ErrorText>{error}</ErrorText>
         <View style={styles.confirmRow}>
           <View style={{ flex: 1 }}>
@@ -426,7 +454,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  filters: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4, marginTop: 8 },
+  filters: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginTop: 10 },
+  deleteCopy: { fontFamily: "Mukta_400Regular", fontSize: 16, lineHeight: 24, color: colors.muted },
+  deleteName: { fontFamily: "Mukta_700Bold", color: colors.ink },
   filterLabel: { fontFamily: "Mukta_500Medium", fontSize: 15, color: colors.muted, marginRight: 8 },
   space: {
     flexDirection: "row",

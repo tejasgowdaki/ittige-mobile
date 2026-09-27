@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { DateField } from "@/components/date-field";
-import { IconPencil, IconPlus, IconTrash } from "@/components/icons";
+import { IconInbox, IconMinus, IconPencil, IconPlus, IconTrash, IconTruck } from "@/components/icons";
 import { PhotoPicker, type PickedPhoto } from "@/components/photo-picker";
 import {
   Badge,
@@ -48,7 +48,13 @@ type Transfer = {
   fromLocation: LocationRef | null;
   toLocation: LocationRef;
   lines: { qtySent: string | number; material: { name: string; uom: string } }[];
-  media?: { url: string }[];
+  media?: { id: string; url: string }[];
+};
+type MediaTarget = {
+  ownerType: "TRANSFER";
+  ownerId: string;
+  title: string;
+  media: { id: string; url: string }[];
 };
 type BalanceGroup = {
   materialId: string;
@@ -72,6 +78,38 @@ const TABS = [
   ["transfers", "Transfers"],
   ["godowns", "Godowns"],
 ] as const;
+
+function photoSource(url: string, token: string | null) {
+  return {
+    uri: url.startsWith("http") ? url : `${apiBaseUrl()}${url}`,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  };
+}
+
+function MediaStrip({
+  items,
+  token,
+  large,
+}: {
+  items?: { id?: string; url: string }[];
+  token: string | null;
+  large?: boolean;
+}) {
+  if (!items || items.length === 0) return null;
+  const size = large ? 96 : 56;
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+      {items.map((item) => (
+        <Image
+          key={item.id ?? item.url}
+          source={photoSource(item.url, token)}
+          style={{ width: size, height: size, borderRadius: 8 }}
+          contentFit="cover"
+        />
+      ))}
+    </View>
+  );
+}
 
 function locationLabel(location: LocationRef | null, supplierName?: string | null) {
   if (!location) return supplierName ? `Buy · ${supplierName}` : "Buy from provider";
@@ -101,7 +139,8 @@ export default function StockScreen() {
   const [locationsMaterialId, setLocationsMaterialId] = useState<string | null>(null);
   const [godownToDelete, setGodownToDelete] = useState<{ id: string; name: string } | null>(null);
   const [materialToDelete, setMaterialToDelete] = useState<{ id: string; name: string } | null>(null);
-  const [viewer, setViewer] = useState<string | null>(null);
+  const [mediaTarget, setMediaTarget] = useState<MediaTarget | null>(null);
+  const [mediaPhotos, setMediaPhotos] = useState<PickedPhoto[]>([]);
   const [godownName, setGodownName] = useState("");
   const [editingGodown, setEditingGodown] = useState<string | null>(null);
   const [editingMaterial, setEditingMaterial] = useState<{ id: string; name: string; uom: string } | null>(null);
@@ -295,10 +334,23 @@ export default function StockScreen() {
 
   async function remove() {
     if (!companyId || !removeBalance) return;
+    const quantity = Number(removeQty);
+    const available = Number(removeBalance.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Enter a quantity to remove");
+      return;
+    }
+    if (quantity > available) {
+      setError(`Only ${available} ${removeBalance.material.uom} available`);
+      return;
+    }
+    if (removeReason === "USED" && !removeProjectId) {
+      setError("Select a project");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const quantity = Number(removeQty);
       if (removeReason === "USED") {
         const usage = await apiFetch<{ id: string }>("/api/v1/usages", {
           method: "POST",
@@ -337,7 +389,9 @@ export default function StockScreen() {
     }
   }
 
-  if (gate.loading) return <Screen><Empty>Loading…</Empty></Screen>;
+  if (gate.loading || (ready && stockQuery.isPending && !stockQuery.data)) {
+    return <Screen><Empty>Loading…</Empty></Screen>;
+  }
 
   const token = getSessionToken();
   const quantityLabel = transferAvailable
@@ -384,7 +438,7 @@ export default function StockScreen() {
                       setMaterialOpen(true);
                     }}
                   >
-                    <IconPencil size={16} color={colors.ink} />
+                    <IconPencil size={14} color={colors.ink} />
                   </Pressable>
                 </View>
                 <FilterLink
@@ -423,7 +477,16 @@ export default function StockScreen() {
             <Pressable
               key={transfer.id}
               style={styles.row}
-              onPress={() => setViewer(transfer.media?.[0]?.url ?? null)}
+              onPress={() => {
+                setError(null);
+                setMediaPhotos([]);
+                setMediaTarget({
+                  ownerType: "TRANSFER",
+                  ownerId: transfer.id,
+                  title: `${locationLabel(transfer.fromLocation, transfer.supplierName)} → ${locationLabel(transfer.toLocation)}`,
+                  media: transfer.media ?? [],
+                });
+              }}
             >
               <View style={styles.rowMain}>
                 <Text style={styles.rowTitle}>
@@ -433,6 +496,7 @@ export default function StockScreen() {
                   {transfer.lines.map((line) => `${line.material.name} ${Number(line.qtySent)} ${line.material.uom}`).join(" · ")}
                   {transfer.notes ? ` · ${transfer.notes}` : ""}
                 </Text>
+                <MediaStrip items={transfer.media} token={token} />
               </View>
             </Pressable>
           ))}
@@ -530,7 +594,7 @@ export default function StockScreen() {
                 />
               ) : null}
             </View>
-            <TextField value={newMaterial} onChangeText={setNewMaterial} placeholder="Material name" />
+            <TextField value={newMaterial} onChangeText={setNewMaterial} />
             <SelectField label="Unit" quiet value={uom} onChange={setUom} options={UOMS.map((value) => ({ value, label: value }))} />
           </>
         )}
@@ -543,7 +607,7 @@ export default function StockScreen() {
           label="Receive stock"
           pending={saving}
           disabled={godowns.length === 0}
-          icon={<IconPlus size={16} color={colors.accentInk} />}
+          icon={<IconInbox size={16} color={colors.accentInk} />}
           onPress={() => void receive()}
         />
       </Sheet>
@@ -578,6 +642,7 @@ export default function StockScreen() {
           label="Create transfer"
           pending={saving}
           disabled={locations.length < 2 || !transferMaterialId}
+          icon={<IconTruck size={16} color={colors.accentInk} />}
           onPress={() => void transfer()}
         />
       </Sheet>
@@ -656,29 +721,34 @@ export default function StockScreen() {
       >
         {locationsGroup ? (
           <>
-            <Copy>
+            <Text style={styles.muted}>
               {`Total ${locationsGroup.total} ${locationsGroup.uom} across ${locationsGroup.lines.length} ${locationsGroup.lines.length === 1 ? "location" : "locations"}`}
-            </Copy>
+            </Text>
             {locationsGroup.lines.map((balance) => (
-              <View key={balance.id} style={styles.row}>
-                <View style={styles.rowMain}>
-                  <Text style={styles.rowTitle}>{balanceLocationLabel(balance)}</Text>
-                  <Text style={styles.rowSub}>
-                    {Number(balance.quantity)} {balance.material.uom}
-                  </Text>
+              <View key={balance.id} style={styles.locationCard}>
+                <View style={[styles.row, { borderBottomWidth: 0 }]}>
+                  <View style={styles.rowMain}>
+                    <Text style={styles.rowTitle}>{balanceLocationLabel(balance)}</Text>
+                    <Text style={styles.rowSub}>
+                      {Number(balance.quantity)} {balance.material.uom}
+                    </Text>
+                  </View>
+                  <FilterLink
+                    label="Remove"
+                    onPress={() => {
+                      setError(null);
+                      setLocationsMaterialId(null);
+                      setRemoveBalance(balance);
+                      setRemoveQty("");
+                      setRemoveReason("USED");
+                      setRemoveProjectId(balance.stockLocation.projectId || projects[0]?.id || "");
+                      setRemoveNote("");
+                      setDate(toDateKey(new Date()));
+                      setPhotos([]);
+                    }}
+                  />
                 </View>
-                <FilterLink
-                  label="Remove"
-                  onPress={() => {
-                    setRemoveBalance(balance);
-                    setRemoveQty("");
-                    setRemoveReason("USED");
-                    setRemoveProjectId(projects[0]?.id ?? "");
-                    setRemoveNote("");
-                    setDate(toDateKey(new Date()));
-                    setPhotos([]);
-                  }}
-                />
+                <MediaStrip items={balance.media} token={token} />
               </View>
             ))}
           </>
@@ -712,7 +782,13 @@ export default function StockScreen() {
         <DateField label="Date" value={date} onChange={setDate} />
         <PhotoPicker photos={photos} onChange={setPhotos} />
         <ErrorText>{error}</ErrorText>
-        <Button label="Remove stock" pending={saving} onPress={() => void remove()} />
+        <Button
+          label="Remove stock"
+          pending={saving}
+          disabled={!removeBalance || (removeReason === "USED" && projects.length === 0)}
+          icon={<IconMinus size={16} color={colors.accentInk} />}
+          onPress={() => void remove()}
+        />
       </Sheet>
 
       <Sheet
@@ -769,17 +845,47 @@ export default function StockScreen() {
         />
       </Sheet>
 
-      <Sheet open={Boolean(viewer)} title="Photo" onClose={() => setViewer(null)}>
-        {viewer ? (
-          <Image
-            source={{
-              uri: viewer.startsWith("http") ? viewer : `${apiBaseUrl()}${viewer}`,
-              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            }}
-            style={{ width: "100%", height: 280 }}
-            contentFit="contain"
-          />
-        ) : null}
+      <Sheet
+        open={Boolean(mediaTarget)}
+        title={mediaTarget?.title ?? "Photos"}
+        onClose={() => {
+          setMediaTarget(null);
+          setMediaPhotos([]);
+          setError(null);
+        }}
+      >
+        {mediaTarget && mediaTarget.media.length > 0 ? (
+          <MediaStrip items={mediaTarget.media} token={token} large />
+        ) : (
+          <Empty>No photos yet.</Empty>
+        )}
+        <PhotoPicker photos={mediaPhotos} onChange={setMediaPhotos} />
+        <ErrorText>{error}</ErrorText>
+        <Button
+          label="Add photos"
+          pending={saving}
+          disabled={mediaPhotos.length === 0}
+          icon={<IconPlus size={16} color={colors.accentInk} />}
+          onPress={() => {
+            if (!companyId || !mediaTarget || mediaPhotos.length === 0) return;
+            setSaving(true);
+            setError(null);
+            void (async () => {
+              try {
+                for (const photo of mediaPhotos) {
+                  await uploadMedia({ companyId, ownerType: mediaTarget.ownerType, ownerId: mediaTarget.ownerId, ...photo });
+                }
+                setMediaTarget(null);
+                setMediaPhotos([]);
+                await refreshStock();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Could not upload photos");
+              } finally {
+                setSaving(false);
+              }
+            })();
+          }}
+        />
       </Sheet>
     </Screen>
   );
@@ -788,7 +894,10 @@ export default function StockScreen() {
 const styles = StyleSheet.create({
   tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   tab: { alignSelf: "flex-start", flexDirection: "row" },
-  section: { marginTop: 20 },
+  section: { marginTop: 28 },
+  muted: { fontFamily: "Mukta_400Regular", fontSize: 14, color: colors.muted },
+  locationCard: { borderBottomWidth: 1, borderBottomColor: colors.line },
+  mediaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8, marginBottom: 8 },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
   sectionLabel: {
     fontFamily: "Mukta_600SemiBold",

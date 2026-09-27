@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { OnboardingForm } from "@/components/onboarding-form";
-import { Copy, Empty, FilterLink, Row, Screen, Title } from "@/components/ui";
+import { Button, Copy, Empty, ErrorText, FilterLink, Label, Row, Screen, Title } from "@/components/ui";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
 import { toDateKey } from "@/lib/dates";
 import {
@@ -57,6 +57,20 @@ type Transfer = {
 
 function locationName(location: { godown: { name: string } | null; project: { name: string } | null; kind: string }) {
   return location.godown?.name || location.project?.name || location.kind;
+}
+
+function titleCaseToken(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function transferFromLabel(transfer: Transfer) {
+  if (!transfer.fromLocation) {
+    return transfer.supplierName ? `Buy · ${transfer.supplierName}` : "Buy from provider";
+  }
+  return locationName(transfer.fromLocation);
 }
 
 function kindLabel(kind: SiteLogEntry["kind"]) {
@@ -139,19 +153,22 @@ export default function HomeScreen() {
     <Screen>
       <Title>Today</Title>
       <Copy>Projects, progress, and stock in one place.</Copy>
-      <View style={{ flexDirection: "row", gap: 12, marginBottom: 16 }}>
+      {projectsQuery.error ? (
+        <ErrorText>{projectsQuery.error instanceof Error ? projectsQuery.error.message : "Could not load projects"}</ErrorText>
+      ) : null}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 28, marginTop: 28, marginBottom: 8 }}>
         <Metric value={String(activeCount)} label="Active projects" />
         {completedCount > 0 ? <Metric value={String(completedCount)} label="Completed projects" /> : null}
-        <Metric value={`${formatAreaValue(totalArea)} ${areaUnitSymbol(defaultUnit)}`} label="Area built" />
+        <Metric value={formatAreaValue(totalArea)} unit={areaUnitSymbol(defaultUnit)} label="Area built" />
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-        <Text style={{ fontFamily: "Mukta_600SemiBold", color: colors.muted, letterSpacing: 1 }}>RECENT PROJECTS</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 28 }}>
+        <Label>Recent projects</Label>
         <FilterLink label="View all" muted trailing onPress={() => router.push("/projects")} />
       </View>
       {recentProjects.length === 0 ? (
         <>
           <Empty>No projects yet.</Empty>
-          <FilterLink label="Add a project" active onPress={() => router.push("/projects")} />
+          <Button label="Add a project" onPress={() => router.push("/projects")} />
         </>
       ) : (
         recentProjects.map((project) => (
@@ -163,7 +180,7 @@ export default function HomeScreen() {
           />
         ))
       )}
-      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 16 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginTop: 28 }}>
         <FilterLink label="Progress" count={progressEntries.length} active={feed === "progress"} onPress={() => setFeed("progress")} />
         {canReadStock ? (
           <>
@@ -178,7 +195,8 @@ export default function HomeScreen() {
           onPress={() => router.push(feed === "progress" ? "/progress" : "/stock")}
         />
       </View>
-      {feed === "progress"
+      {feed === "progress" && progressQuery.isPending ? <Empty>Loading…</Empty> : null}
+      {feed === "progress" && !progressQuery.isPending
         ? progressEntries.slice(0, 8).map((entry) => (
             <Row
               key={entry.id}
@@ -188,40 +206,49 @@ export default function HomeScreen() {
             />
           ))
         : null}
-      {feed === "progress" && progressEntries.length === 0 ? <Empty>No progress logged today.</Empty> : null}
-      {feed === "stock"
+      {feed === "progress" && !progressQuery.isPending && progressEntries.length === 0 ? <Empty>No progress logged today.</Empty> : null}
+      {feed === "stock" && movementsQuery.isPending ? <Empty>Loading…</Empty> : null}
+      {feed === "stock" && !movementsQuery.isPending
         ? balanceChanges.slice(0, 8).map((movement) => {
             const qty = Number(movement.quantityDelta);
             return (
               <Row
                 key={movement.id}
                 title={`${movement.material.name} · ${qty > 0 ? "+" : ""}${qty} ${movement.material.uom}`}
-                subtitle={`${movement.type.replaceAll("_", " ")} · ${locationName(movement.stockLocation)}`}
+                subtitle={`${titleCaseToken(movement.type)}${movement.notes ? ` · ${movement.notes}` : ""} · ${locationName(movement.stockLocation)}`}
                 onPress={() => router.push("/stock")}
               />
             );
           })
         : null}
-      {feed === "stock" && balanceChanges.length === 0 ? <Empty>No stock changes today.</Empty> : null}
-      {feed === "transfers"
+      {feed === "stock" && !movementsQuery.isPending && balanceChanges.length === 0 ? <Empty>No stock changes today.</Empty> : null}
+      {feed === "transfers" && transfersQuery.isPending ? <Empty>Loading…</Empty> : null}
+      {feed === "transfers" && !transfersQuery.isPending
         ? todayTransfers.slice(0, 8).map((transfer) => (
             <Row
               key={transfer.id}
-              title={`${transfer.fromLocation ? locationName(transfer.fromLocation) : transfer.supplierName || "Buy"} → ${locationName(transfer.toLocation)}`}
-              subtitle={transfer.status}
+              title={`${transferFromLabel(transfer)} → ${locationName(transfer.toLocation)}`}
+              subtitle={`${titleCaseToken(transfer.status)}${
+                transfer.lines.length > 0
+                  ? ` · ${transfer.lines.map((line) => `${line.material.name} ${line.qtySent} ${line.material.uom}`).join(", ")}`
+                  : ""
+              }`}
               onPress={() => router.push("/stock")}
             />
           ))
         : null}
-      {feed === "transfers" && todayTransfers.length === 0 ? <Empty>No transfers today.</Empty> : null}
+      {feed === "transfers" && !transfersQuery.isPending && todayTransfers.length === 0 ? <Empty>No transfers today.</Empty> : null}
     </Screen>
   );
 }
 
-function Metric({ value, label }: { value: string; label: string }) {
+function Metric({ value, unit, label }: { value: string; unit?: string; label: string }) {
   return (
-    <View style={{ flex: 1 }}>
-      <Text style={{ fontFamily: "Mukta_700Bold", fontSize: 28, color: colors.ink }}>{value}</Text>
+    <View>
+      <Text style={{ fontFamily: "Mukta_700Bold", fontSize: 38, color: colors.ink }}>
+        {value}
+        {unit ? <Text style={{ fontFamily: "Mukta_600SemiBold", fontSize: 15, color: colors.muted }}> {unit}</Text> : null}
+      </Text>
       <Text style={{ fontFamily: "Mukta_400Regular", color: colors.muted }}>{label}</Text>
     </View>
   );

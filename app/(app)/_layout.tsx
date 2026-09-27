@@ -109,7 +109,10 @@ function MenuBar({
           >
             <View style={[styles.tabPill, focused && styles.tabPillActive]}>
               <MenuIcon name={item.name} Icon={item.Icon} color={color} focused={focused} count={pending} />
-              <Text style={[styles.tabLabel, { color }]} numberOfLines={1}>
+              <Text
+                style={[styles.tabLabel, (item.name === "requests" || item.name === "activity") && styles.tabLabelTight, { color }]}
+                numberOfLines={1}
+              >
                 {item.title}
               </Text>
             </View>
@@ -148,7 +151,7 @@ const styles = StyleSheet.create({
     gap: 2,
     paddingTop: 8,
     paddingHorizontal: 10,
-    backgroundColor: colors.bg,
+    backgroundColor: "rgba(247,237,231,0.94)",
     borderTopWidth: 1,
     borderTopColor: colors.line,
   },
@@ -158,20 +161,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 4,
     paddingVertical: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: 4,
     borderRadius: 12,
   },
   tabPillActive: { backgroundColor: colors.accent },
   tabLabel: { fontFamily: "Mukta_600SemiBold", fontSize: 11 },
+  tabLabelTight: { fontSize: 10 },
   tabIcon: { width: 24, height: 20, alignItems: "center", justifyContent: "center" },
   badge: {
     position: "absolute",
-    top: -6,
-    right: -10,
-    minWidth: 18,
-    height: 18,
+    top: -7,
+    right: -12,
+    minWidth: 16,
+    height: 16,
     paddingHorizontal: 4,
-    borderRadius: 9,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -179,8 +183,8 @@ const styles = StyleSheet.create({
   badgeIdle: { backgroundColor: colors.accent },
   badgeText: {
     fontFamily: "Mukta_700Bold",
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 10,
+    lineHeight: 12,
     textAlign: "center",
     includeFontPadding: false,
     textAlignVertical: "center",

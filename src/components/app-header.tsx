@@ -20,11 +20,12 @@ export function AppHeader() {
   const [profileName, setProfileName] = useState("");
   const [profilePhone, setProfilePhone] = useState("");
   const [saving, setSaving] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const current = me?.companies.find((company) => company.id === companyId) ?? null;
   const isAdmin = current?.companyRole === "ADMIN";
-  const initial = (me?.name?.trim()?.[0] || "?").toUpperCase();
+  const initial = (me?.name?.trim()?.[0] || me?.phone?.slice(-1) || "?").toUpperCase();
   const projects = me?.projectAssignments.filter((item) => item.companyId === companyId) ?? [];
 
   function localPhone(phone: string | null | undefined) {
@@ -64,20 +65,20 @@ export function AppHeader() {
   return (
     <View style={styles.header}>
       <View style={{ flex: 1 }}>
-        <Text style={styles.brand}>
-          <Text style={styles.amp}>I</Text>ttige
-        </Text>
+        <View style={styles.brandRow}>
+          <Text style={[styles.brand, styles.amp]}>I</Text>
+          <Text style={styles.brand}>ttige</Text>
+        </View>
         {companyName ? <Text style={styles.company}>{companyName}</Text> : null}
       </View>
       {me && me.companies.length > 1 ? (
-        <View style={{ width: 140 }}>
-          <SelectField
-            label="Company"
-            value={companyId ?? ""}
-            onChange={setCompanyId}
-            options={me.companies.map((company) => ({ value: company.id, label: company.name }))}
-          />
-        </View>
+        <SelectField
+          label="Company"
+          compact
+          value={companyId ?? ""}
+          onChange={setCompanyId}
+          options={me.companies.map((company) => ({ value: company.id, label: company.name }))}
+        />
       ) : null}
       <Pressable style={styles.avatar} onPress={() => setSheet("menu")}>
         <Text style={styles.avatarText}>{initial}</Text>
@@ -118,10 +119,12 @@ export function AppHeader() {
             ) : null}
             <MenuItem
               icon={<IconLogout size={16} color={colors.ink} />}
-              label="Sign out"
+              label={signingOut ? "Signing out…" : "Sign out"}
               onPress={() => {
+                if (signingOut) return;
+                setSigningOut(true);
                 setSheet(null);
-                void signOut();
+                void signOut().finally(() => setSigningOut(false));
               }}
             />
           </>
@@ -143,7 +146,7 @@ export function AppHeader() {
               </Field>
             )}
             {current ? (
-              <Field label="Role">
+              <Field label="Role" quiet>
                 {current.companyRole === "ADMIN" ? (
                   <Badge>Admin</Badge>
                 ) : current.allProjects ? (
@@ -188,22 +191,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    paddingTop: __DEV__ ? 52 : 18,
     paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingBottom: 8,
     backgroundColor: colors.bg,
   },
-  brand: { fontFamily: "Mukta_800ExtraBold", fontSize: 28, color: colors.ink },
-  amp: { color: colors.accent },
+  brandRow: { flexDirection: "row", alignItems: "flex-end" },
+  brand: {
+    fontFamily: "Mukta_800ExtraBold",
+    fontSize: 26,
+    lineHeight: 44,
+    letterSpacing: -0.6,
+    color: colors.ink,
+    paddingRight: 2,
+  },
+  amp: { color: colors.accent, paddingRight: 0 },
   company: { fontFamily: "Mukta_400Regular", color: colors.muted, fontSize: 13 },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.accent,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: "rgba(58,34,24,0.04)",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { color: colors.accentInk, fontFamily: "Mukta_700Bold", fontSize: 16 },
+  avatarText: { color: colors.ink, fontFamily: "Mukta_700Bold", fontSize: 15 },
   name: { fontFamily: "Mukta_700Bold", fontSize: 18, color: colors.ink },
   menuItem: {
     flexDirection: "row",
@@ -224,7 +238,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
-  hint: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: -4 },
+  hint: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 6 },
   saveText: { color: colors.accentInk, fontFamily: "Mukta_700Bold", fontSize: 16 },
   disabled: { opacity: 0.55 },
 });

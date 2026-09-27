@@ -190,6 +190,34 @@ export function IconSave({ size, color = "#3a2218" }: IconProps) {
   );
 }
 
+export function IconMinus({ size, color = "#3a2218" }: IconProps) {
+  return (
+    <Mark size={size}>
+      <Path d="M5 12h14" stroke={color} {...stroke} />
+    </Mark>
+  );
+}
+
+export function IconTruck({ size, color = "#3a2218" }: IconProps) {
+  return (
+    <Mark size={size}>
+      <Path d="M1 8h12v9H1Z" stroke={color} {...stroke} />
+      <Path d="M13 11h5l3 3v3h-8" stroke={color} {...stroke} />
+      <Circle cx="5.5" cy="18.5" r="1.5" stroke={color} {...stroke} />
+      <Circle cx="17.5" cy="18.5" r="1.5" stroke={color} {...stroke} />
+    </Mark>
+  );
+}
+
+export function IconInbox({ size, color = "#3a2218" }: IconProps) {
+  return (
+    <Mark size={size}>
+      <Path d="M22 12h-6l-2 3H10l-2-3H2" stroke={color} {...stroke} />
+      <Path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" stroke={color} {...stroke} />
+    </Mark>
+  );
+}
+
 export function IconActivity({ size, color = "#3a2218" }: IconProps) {
   return (
     <Mark size={size} color={color}>

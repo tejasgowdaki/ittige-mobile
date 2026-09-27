@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { OnboardingForm } from "@/components/onboarding-form";
 import { IconPlus } from "@/components/icons";
-import { Button, Copy, Empty, ErrorText, Field, IconButton, Label, Row, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
+import { Button, Copy, Empty, ErrorText, Field, FieldError, IconButton, Label, Row, Screen, SelectField, Sheet, TextField, Title } from "@/components/ui";
 import { colors } from "@/theme";
 import { apiFetch } from "@/lib/api-client";
 import { useCompany, useCompanyGate } from "@/lib/company-context";
@@ -32,6 +32,7 @@ export default function ProjectsScreen() {
   const [addressLine, setAddressLine] = useState("");
   const [areaUnit, setAreaUnit] = useState<AreaUnitCode>("SQ_FT");
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export default function ProjectsScreen() {
     setAddressLine("");
     setAreaUnit("SQ_FT");
     setError(null);
+    setFieldErrors({});
   }
 
   function closeForm() {
@@ -55,16 +57,16 @@ export default function ProjectsScreen() {
 
   async function create() {
     if (!companyId) return;
-    if (!name.trim()) {
-      setError("Project name is required");
-      return;
-    }
-    if ((clientMode === "new" || clients.length === 0) && !clientName.trim()) {
-      setError("Client name is required");
-      return;
-    }
-    setSaving(true);
+    const next: Record<string, string> = {};
+    if (clientMode === "existing" && clients.length > 0 && !clientId) next.clientId = "Select a client";
+    if ((clientMode === "new" || clients.length === 0) && !clientName.trim()) next.clientName = "Client name is required";
+    if (!name.trim()) next.name = "Project name is required";
+    else if (name.trim().length > 160) next.name = "Project name is too long";
+    if (addressLine.trim().length > 200) next.addressLine = "Address is too long";
+    setFieldErrors(next);
     setError(null);
+    if (Object.keys(next).length > 0) return;
+    setSaving(true);
     try {
       let resolvedClientId = clientMode === "existing" ? clientId : "";
       if (!resolvedClientId) {
@@ -119,7 +121,11 @@ export default function ProjectsScreen() {
       <View style={{ marginTop: 28 }}>
         <Label>All projects</Label>
       </View>
-      {projects.length === 0 ? <Empty>No projects yet.</Empty> : null}
+      {projectsQuery.isPending ? <Empty>Loading…</Empty> : null}
+      {projectsQuery.error ? (
+        <ErrorText>{projectsQuery.error instanceof Error ? projectsQuery.error.message : "Could not load projects"}</ErrorText>
+      ) : null}
+      {!projectsQuery.isPending && projects.length === 0 ? <Empty>No projects yet.</Empty> : null}
       {projects.map((project) => (
         <Row
           key={project.id}
@@ -130,30 +136,36 @@ export default function ProjectsScreen() {
       ))}
       <Sheet open={open} title="New project" onClose={closeForm}>
         {clients.length > 0 ? (
-          <SelectField
-            label="Client"
-            quiet
-            value={clientMode === "new" ? NEW_CLIENT : clientId}
-            onChange={(next) => {
-              if (next === NEW_CLIENT) setClientMode("new");
-              else {
-                setClientMode("existing");
-                setClientId(next);
-              }
-            }}
-            options={[...clients.map((client) => ({ value: client.id, label: client.name })), { value: NEW_CLIENT, label: "New client…" }]}
-          />
+          <>
+            <SelectField
+              label="Client"
+              quiet
+              value={clientMode === "new" ? NEW_CLIENT : clientId}
+              onChange={(next) => {
+                if (next === NEW_CLIENT) setClientMode("new");
+                else {
+                  setClientMode("existing");
+                  setClientId(next);
+                }
+              }}
+              options={[...clients.map((client) => ({ value: client.id, label: client.name })), { value: NEW_CLIENT, label: "New client…" }]}
+            />
+            <FieldError>{fieldErrors.clientId}</FieldError>
+          </>
         ) : null}
         {clientMode === "new" || clients.length === 0 ? (
           <Field label={clients.length === 0 ? "Client" : "New client name"} quiet>
-            <TextField value={clientName} onChangeText={setClientName} />
+            <TextField value={clientName} onChangeText={setClientName} maxLength={160} />
+            <FieldError>{fieldErrors.clientName}</FieldError>
           </Field>
         ) : null}
         <Field label="Project name" quiet>
-          <TextField value={name} onChangeText={setName} />
+          <TextField value={name} onChangeText={setName} maxLength={160} />
+          <FieldError>{fieldErrors.name}</FieldError>
         </Field>
         <Field label="Address (optional)" quiet>
-          <TextField value={addressLine} onChangeText={setAddressLine} multiline placeholder="Street, area, city" />
+          <TextField value={addressLine} onChangeText={setAddressLine} multiline maxLength={200} placeholder="Street, area, city" />
+          <FieldError>{fieldErrors.addressLine}</FieldError>
         </Field>
         <SelectField
           label="Area unit"

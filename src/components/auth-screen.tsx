@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { HeroBackdrop } from "@/components/hero-backdrop";
 import { PhoneAuthForm } from "@/components/phone-auth-form";
 import { colors } from "@/theme";
 
@@ -8,6 +9,7 @@ export function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
   const router = useRouter();
   return (
     <SafeAreaView style={styles.safe}>
+      <HeroBackdrop />
       <View style={styles.inner}>
         <Text style={styles.title}>{mode === "sign-in" ? "Sign in" : "Create account"}</Text>
         <Text style={styles.copy}>Indian mobile (+91). We’ll text you an OTP.</Text>
@@ -41,5 +43,11 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   cancelHit: { marginTop: 18, alignItems: "center" },
-  cancel: { fontFamily: "Mukta_400Regular", fontSize: 16, color: colors.muted },
+  cancel: {
+    fontFamily: "Mukta_600SemiBold",
+    fontSize: 16,
+    color: colors.ink,
+    textDecorationLine: "underline",
+    textDecorationColor: "rgba(58,34,24,0.35)",
+  },
 });

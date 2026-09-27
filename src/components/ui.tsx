@@ -14,7 +14,7 @@ import {
   type TextInputProps,
 } from "react-native";
 import { IconChevronDown, IconClose, IconPlus } from "@/components/icons";
-import { colors, controlHeight, radius } from "@/theme";
+import { colors, controlHeight } from "@/theme";
 
 export function Screen({ children }: { children: React.ReactNode }) {
   return (
@@ -145,6 +145,11 @@ export function ErrorText({ children }: { children: string | null }) {
   return <Text style={styles.error}>{children}</Text>;
 }
 
+export function FieldError({ children }: { children: string | null | undefined }) {
+  if (!children) return null;
+  return <Text style={styles.fieldError}>{children}</Text>;
+}
+
 export function Empty({ children }: { children: string }) {
   return <Text style={styles.empty}>{children}</Text>;
 }
@@ -183,7 +188,7 @@ export function Button({
 export function IconButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={styles.iconButton} accessibilityLabel={label}>
-      <IconPlus size={16} color={colors.accentInk} />
+      <IconPlus size={18} color={colors.accentInk} />
     </Pressable>
   );
 }
@@ -237,10 +242,12 @@ export function FilterLink({
 }) {
   return (
     <Pressable onPress={onPress} style={[styles.filterHit, trailing && styles.filterHitTrailing]}>
-      <Text style={[styles.filter, active && styles.filterActive, muted && styles.filterMuted]}>{label}</Text>
-      {count !== undefined ? (
-        <Text style={[styles.filterCount, active && styles.filterActive]}>{count}</Text>
-      ) : null}
+      <Text style={[styles.filter, active && styles.filterActive, muted && styles.filterMuted]}>
+        {label}
+        {count !== undefined ? (
+          <Text style={[styles.filterCount, active && styles.filterCountActive]}> {count}</Text>
+        ) : null}
+      </Text>
     </Pressable>
   );
 }
@@ -295,6 +302,7 @@ export function CheckBox({
 export function SelectField({
   label,
   quiet,
+  compact,
   value,
   options,
   onChange,
@@ -302,6 +310,7 @@ export function SelectField({
 }: {
   label?: string;
   quiet?: boolean;
+  compact?: boolean;
   value: string;
   options: { value: string; label: string }[];
   onChange: (value: string) => void;
@@ -309,10 +318,16 @@ export function SelectField({
 }) {
   const [open, setOpen] = useState(false);
   const current = options.find((option) => option.value === value);
-  return (
-    <Field label={label} quiet={quiet}>
-      <Pressable style={[styles.input, styles.select]} onPress={() => setOpen((currentOpen) => !currentOpen)}>
-        <Text style={[styles.inputText, !current && styles.placeholderText]}>{current?.label || placeholder}</Text>
+  const control = (
+    <>
+      <Pressable
+        accessibilityLabel={label}
+        style={[styles.input, styles.select, compact && styles.selectCompact]}
+        onPress={() => setOpen((currentOpen) => !currentOpen)}
+      >
+        <Text style={[styles.inputText, compact && styles.selectCompactText, !current && styles.placeholderText]} numberOfLines={1}>
+          {current?.label || placeholder}
+        </Text>
         <IconChevronDown size={16} color={colors.muted} />
       </Pressable>
       {open ? (
@@ -326,11 +341,17 @@ export function SelectField({
                 setOpen(false);
               }}
             >
-              <Text style={[styles.rowTitle, option.value === value && styles.filterActive]}>{option.label}</Text>
+              <Text style={[styles.rowTitle, option.value === value && styles.optionActive]}>{option.label}</Text>
             </Pressable>
           ))}
         </View>
       ) : null}
+    </>
+  );
+  if (compact) return <View style={styles.compactSelect}>{control}</View>;
+  return (
+    <Field label={label} quiet={quiet}>
+      {control}
     </Field>
   );
 }
@@ -395,7 +416,7 @@ export function Sheet({
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>{title}</Text>
               <Pressable onPress={onClose} style={styles.sheetClose} accessibilityLabel="Close">
-                <IconClose size={16} color={colors.ink} />
+                <IconClose size={18} color={colors.ink} />
               </Pressable>
             </View>
             <ScrollView
@@ -418,16 +439,16 @@ export function Sheet({
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 18, paddingBottom: 32, gap: 8 },
-  title: { fontFamily: "Mukta_700Bold", fontSize: 34, color: colors.ink, letterSpacing: -0.6 },
-  copy: { fontFamily: "Mukta_400Regular", fontSize: 16, color: colors.muted, marginBottom: 8 },
+  page: { paddingTop: 8, paddingHorizontal: 18, paddingBottom: 28, gap: 8 },
+  title: { fontFamily: "Mukta_700Bold", fontSize: 34, lineHeight: 52, color: colors.ink, letterSpacing: -1.4 },
+  copy: { fontFamily: "Mukta_400Regular", fontSize: 16, lineHeight: 24, color: colors.muted, marginTop: 10, maxWidth: 360 },
   label: {
     fontFamily: "Mukta_600SemiBold",
     fontSize: 12,
-    letterSpacing: 1.2,
+    letterSpacing: 1.7,
     textTransform: "uppercase",
     color: colors.muted,
-    marginBottom: 6,
+    marginBottom: 12,
   },
   fieldLabel: {
     fontFamily: "Mukta_400Regular",
@@ -448,11 +469,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.ink,
   },
-  textarea: { minHeight: 88, paddingTop: 12, textAlignVertical: "top" },
+  textarea: { minHeight: 96, paddingTop: 12, textAlignVertical: "top" },
   inputText: { fontFamily: "Mukta_400Regular", fontSize: 16, color: colors.ink },
   placeholderText: { color: colors.muted },
   error: { color: colors.danger, fontFamily: "Mukta_500Medium", marginBottom: 8 },
-  empty: { color: colors.muted, fontFamily: "Mukta_400Regular", paddingVertical: 12 },
+  fieldError: { color: colors.danger, fontFamily: "Mukta_500Medium", fontSize: 13, marginTop: 4 },
+  empty: { color: colors.muted, fontFamily: "Mukta_400Regular", paddingVertical: 28 },
   button: {
     minHeight: controlHeight,
     borderRadius: 999,
@@ -519,35 +541,42 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   rowTitle: { fontFamily: "Mukta_600SemiBold", fontSize: 16, color: colors.ink },
-  rowSub: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 2 },
+  rowSub: { fontFamily: "Mukta_400Regular", fontSize: 13, color: colors.muted, marginTop: 4 },
   badge: {
     alignSelf: "flex-start",
     backgroundColor: colors.accentSoft,
     borderRadius: 999,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  badgeText: { color: colors.accent, fontFamily: "Mukta_700Bold", fontSize: 12 },
-  filterHit: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8, marginRight: 20 },
+  badgeText: {
+    color: colors.accent,
+    fontFamily: "Mukta_700Bold",
+    fontSize: 11,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  filterHit: { paddingVertical: 4, marginRight: 20 },
   filterHitTrailing: { marginLeft: "auto", marginRight: 0 },
   filter: {
     fontFamily: "Mukta_600SemiBold",
     fontSize: 15,
-    color: colors.muted,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-    paddingBottom: 4,
+    color: colors.ink,
+    textDecorationLine: "underline",
+    textDecorationColor: "rgba(58,34,24,0.35)",
   },
-  filterCount: {
-    fontFamily: "Mukta_600SemiBold",
-    fontSize: 15,
+  filterCount: { fontFamily: "Mukta_600SemiBold", fontSize: 15, color: colors.muted },
+  filterCountActive: { color: colors.accent },
+  filterMuted: {
     color: colors.muted,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-    paddingBottom: 4,
+    fontFamily: "Mukta_500Medium",
+    textDecorationColor: "rgba(58,34,24,0.25)",
   },
-  filterMuted: { color: colors.muted, fontFamily: "Mukta_500Medium" },
-  filterActive: { color: colors.accent, borderBottomColor: colors.accent },
+  filterActive: { color: colors.accent, textDecorationColor: colors.accent },
+  optionActive: { color: colors.accent, fontFamily: "Mukta_700Bold" },
+  selectCompact: { minHeight: 36, maxWidth: 160, paddingHorizontal: 12 },
+  selectCompactText: { flex: 1, fontSize: 14 },
+  compactSelect: { maxWidth: 160 },
   switchRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -557,8 +586,8 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(58,34,24,0.35)", justifyContent: "flex-end" },
   sheet: {
     backgroundColor: colors.surface,
-    borderTopLeftRadius: radius,
-    borderTopRightRadius: radius,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
     padding: 18,
     maxHeight: "86%",
   },

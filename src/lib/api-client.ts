@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import { File } from "expo-file-system";
 import { getSessionToken } from "@/lib/session-store";
 
@@ -38,9 +39,25 @@ export class ClientApiError extends Error {
   }
 }
 
+function devServerHost() {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (!hostUri) return null;
+  const host = hostUri.split(":")[0];
+  if (!host || host.includes("exp.direct") || host.includes("exp.host")) return null;
+  return host === "localhost" ? "127.0.0.1" : host;
+}
+
 export function apiBaseUrl() {
-  const configured = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
-  return configured || "http://localhost:3000";
+  const configured = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:3000";
+  const host = __DEV__ ? devServerHost() : null;
+  if (!host) return configured;
+  try {
+    const url = new URL(configured);
+    url.hostname = host;
+    return url.origin;
+  } catch {
+    return `http://${host}:3000`;
+  }
 }
 
 export async function apiFetch<T>(
