@@ -7,7 +7,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiFetch, type MeResponse } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
+import { apiFetch, ClientApiError, type MeResponse } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
 import { loadCompanyId, saveCompanyId } from "@/lib/session-store";
 
@@ -32,6 +33,7 @@ function resolveCompanyId(me: MeResponse | null, preferred: string | null) {
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
+  const { signOut } = useAuth();
   const meQuery = useQuery({
     queryKey: queryKeys.me,
     queryFn: () => apiFetch<MeResponse>("/api/v1/me"),
@@ -43,6 +45,12 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadCompanyId().finally(() => setStoredReady(true));
   }, []);
+
+  useEffect(() => {
+    if (meQuery.error instanceof ClientApiError && meQuery.error.status === 401) {
+      void signOut();
+    }
+  }, [meQuery.error, signOut]);
 
   useEffect(() => {
     if (!meQuery.data || !storedReady) return;
